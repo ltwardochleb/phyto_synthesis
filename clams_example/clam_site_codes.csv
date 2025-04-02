@@ -1,0 +1,54 @@
+﻿Site Code,Location and channel position,Latitude,Longitude,Period of Record (From),Period of Record (To),Missing,Status
+D41-C,San Pablo Bay near Pinole Point - Center,38.0160546,-122.3647171,1996,Present,,Active
+D41A-C,"San Pablo Bay, north central  - Center",38.0847167,-122.3906667,1991,Present,,Active
+C9-L,Old River upstream of Clifton Court Forebay Intake - Left,37.8271721,-121.5522898,1997,Present,,Active
+D7-C,Grizzly Bay at Dolphin near Suisun Slough - Center,38.1171292,-122.0395539,1977,Present,,Active
+D4-L,Sacramento River @ Sherman Island Upstream of Point Sacramento - Left,38.0581151,-121.8193499,1975,Present,1976,Active
+D16-L,San Joaquin River at Bradford Island - Left,38.093031,-121.6697445,1997,Present,,Active
+D24-L,Sacramento River downstream of Rio Vista bridge - Left,38.1547193,-121.6814495,1975,Present,1978-1995,Active
+D6-R,Suisun Bay upstream of I-680 bridge - Right,38.0577031,-122.1149585,1975,Present,1979-1995,Active
+P8-R,San Joaquin River at Buckley Cove - Right,37.9778522,-121.3799929,1978,Present,1980-1995,Active
+D28A-L,Old River upstream of Rock Slough - Left,37.9701652,-121.5741188,1977,Present,1978,Active
+C3-C,Sacramento River @ Greens Landing - Center,38.346149,-121.547031,1975,1979,,Historic
+C3-L,Sacramento River @ Greens Landing - Left,38.34567,-121.546926,1975,1979,"1976, 1977",Historic
+C3-R,Sacramento River @ Greens Landing - Right,38.346681,-121.547089,1975,1979,"1976, 1977",Historic
+C7-C,San Joaquin River @ Mossdale Bridge - Center,37.785905,-121.306903,1975,1979,,Historic
+C7-L,San Joaquin River @ Mossdale Bridge - Left,37.785648,-121.307249,1976,1977,,Historic
+C7-R,San Joaquin River @ Mossdale Bridge - Right,37.786143,-121.307,1976,1977,,Historic
+C9-C,West Canal @ Clifton Court Forebay Intake - Center,37.828237,-121.552374,1996,1996,,Historic
+D10-C,Sacramento River @ Chipps Island - Center,38.046312,-121.913069,1975,1976,,Historic
+D10-L,Sacramento River @ Chipps Island - Left,38.041657,-121.913559,1976,1976,,Historic
+D10-R,Sacramento River @ Chipps Island - Right,38.050357,-121.912918,1976,1976,,Historic
+D11-C,Sherman Lake - Center,38.04223788,-121.7994595,1977,1995,,Historic
+D11-L,Sherman Lake - Left,38.03676129,-121.7861405,1977,1978,,Historic
+D11-R,Sherman Lake - Right,38.05243011,-121.8004779,1977,1978,,Historic
+D12-C,San Joaquin River @ Antioch Ship Channel - Center,38.024132,-121.751559,1975,1977,,Historic
+D14A-C,Big Break - Center,38.017715,-121.711397,1975,1979,,Historic
+D14A-L,Big Break - Left,38.014774,-121.709512,1976,1977,,Historic
+D14A-R,Big Break - Right,38.021058,-121.712968,1976,1977,,Historic
+D16-C,San Joaquin River @ Twitchell Island - Center,38.095334,-121.668217,1975,1995,1976-1994,Historic
+D19-C,Franks Tract - Center,38.050708,-121.613922,1977,1995,,Historic
+D19-L,Franks Tract - Left,38.046592,-121.623322,1978,1978,,Historic
+D19-R,Franks Tract - Right,38.057049,-121.616686,1978,1978,,Historic
+D26-C,San Joaquin River @ Potato Point - Center,38.080164,-121.572879,1975,1977,,Historic
+D26-L,San Joaquin River @ Potato Point - Left,38.079944,-121.578,1976,1976,,Historic
+D26-R,San Joaquin River @ Potato Point - Right,38.080219,-121.569241,1976,1976,,Historic
+D28A-C,Old River @ Rancho Del Rio- Center,37.97048,-121.573104,1975,1978,,Historic
+D28A-R,Old River @ Rancho Del Rio - Right,37.970633,-121.572327,1975,1995,"1976, 1978",Historic
+D4-C,Sacramento River above Point Sacramento - Center,38.062148,-121.817927,1975,1995,,Historic
+D4-R,Sacramento River above Point Sacramento - Right,38.066575,-121.817297,1977,1995,,Historic
+D6-L,Suisun Bay @ Bulls Head nr. Martinez - Left,38.038616,-122.113947,1976,1977,,Historic
+D6-C,Suisun Bay upstream of I-680 bridge (center),38.04674265,-122.124652,1976,1977,,Historic
+D7-L,Grizzly bay @ Dolphin nr. Suisun Slough - Left,38.100326,-122.0222,1977,1977,,Historic
+D7-R,Grizzly bay @ Dolphin nr. Suisun Slough - Right,38.116688,-122.052305,1977,1977,,Historic
+D8-C,Suisun Bay off Middle Point near Nichols - Center,38.059913,-121.99,1975,1976,,Historic
+D9-C,Honker Bay near Wheeler Point - Center,38.079212,-121.930289,1977,1979,,Historic
+D9-R,Honker Bay near Wheeler Point - Right,38.07591,-121.945227,1977,1978,,Historic
+MD6-C,Sycamore Slough near mouth - Center,38.14238,-121.469539,1975,1979,,Historic
+MD6-L,Sycamore Slough near mouth - Left,38.141756,-121.470066,1976,1977,,Historic
+MD6-R,Sycamore Slough near mouth - Right,38.14295,-121.469002,1976,1977,,Historic
+MD7-C,South Fork Mokelumne River - Center,38.125089,-121.496983,1975,1978,,Historic
+MD7-L,South Fork Mokelumne River - Left,38.125008,-121.496266,1977,1979,,Historic
+MD7-R,South Fork Mokelumne River - Right,38.125128,-121.497895,1977,1979,,Historic
+P8-C,San Joaquin River @ Buckley Cove - Center,37.97802,-121.382149,1975,1978,,Historic
+P8-L,San Joaquin River @ Buckley Cove - Left,37.977611,-121.382511,1975,1979,"1976, 1977",Historic
