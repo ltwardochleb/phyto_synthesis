@@ -67,6 +67,7 @@ EMP_df <- EMP_df %>%
 
 #Remove sites we do not consider to be in the Delta
 #Combine sites that had slight location change
+unique(EMP_df$Site_Abbrev)
 EMP_df <- EMP_df %>%
   subset(Site_Abbrev != "D41"&Site_Abbrev != "D41A"&Site_Abbrev != "D42"&Site_Abbrev != "D6"&Site_Abbrev != "NZ002"&Site_Abbrev != "NZ004"&
            Site_Abbrev != "NZ325") %>%
@@ -75,7 +76,8 @@ EMP_df <- EMP_df %>%
   mutate(Site_Abbrev = ifelse(Site_Abbrev =="MD7", "MD7A", Site_Abbrev))%>%
   mutate(Site_Abbrev = ifelse(Site_Abbrev =="MD10", "MD10A", Site_Abbrev))%>%
   mutate(Site_Abbrev = ifelse(Site_Abbrev =="C3", "C3A", Site_Abbrev))%>%
-  mutate(Site_Abbrev = ifelse(Site_Abbrev =="C10", "C10A", Site_Abbrev))
+  mutate(Site_Abbrev = ifelse(Site_Abbrev =="C10", "C10A", Site_Abbrev))%>%
+  mutate(Site_Abbrev = ifelse(Site_Abbrev =="S42", "NZS42", Site_Abbrev))
 
 
 #### Examine data completeness ####
