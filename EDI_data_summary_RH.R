@@ -16,6 +16,8 @@ lapply(c("deltamapr", "tidyverse", "lubridate", "sf"), require, character.only =
 library(car)
 library(emmeans)
 library(multcomp)
+library(dplyr)
+library(tidyr)
 
 
 ## Read in the EDI data set by running edi.731.7.r##########
@@ -26,7 +28,7 @@ dt1 <- as_tibble(dt1)
 
 ### create tibbles for each metric #########################
 edi_data <- dt1 %>%
-  select(Temperature, Conductivity, Salinity, Secchi, Tide, Date, Datetime, Latitude, Longitude)%>%
+  dplyr::select(Temperature, Conductivity, Salinity, Secchi, Tide, Date, Datetime, Latitude, Longitude) %>%
   filter(!is.na(Latitude) & !is.na(Longitude))
 
 #read in region data
@@ -69,7 +71,7 @@ edi_data_with_regions_monthly <-edi_data_with_regions%>%mutate(Month = month(Dat
 ############## Temperature Summary plots #########################################################
 
 temperature_summary <- edi_data_with_regions_monthly %>%
-  select(-Conductivity, -Salinity, -Secchi, -Tide)
+  dplyr::select(-Conductivity, -Salinity, -Secchi, -Tide)
 
 temperature_count <-temperature_summary%>%group_by(Region, Year, Season)%>%summarize(n=n())
 
@@ -111,7 +113,7 @@ ggsave("temp_yearly_sampling_coverage.png", temp_sites_plot3,  width=14, height=
 #### Conductivity ###################################################################################
 
 con_summary <- edi_data_with_regions_monthly %>%
-  select(-Temperature, -Salinity, -Secchi, -Tide)
+  dplyr::select(-Temperature, -Salinity, -Secchi, -Tide)
 
 con_count <- con_summary%>%group_by(Region, Year, Season)%>%summarize(n=n())
 
@@ -153,7 +155,7 @@ ggsave("con_yearly_sampling_coverage.png", con_sites_plot3,  width=14, height=8)
 #### Salinity ###################################################################################
 
 salt_summary <- edi_data_with_regions_monthly %>%
-  select(-Temperature, -Conductivity, -Secchi, -Tide)
+  dplyr::select(-Temperature, -Conductivity, -Secchi, -Tide)
 
 salt_count <- salt_summary%>%group_by(Region, Year, Season)%>%summarize(n=n())
 
@@ -196,7 +198,7 @@ ggsave("salt_yearly_sampling_coverage.png", salt_sites_plot3,  width=14, height=
 #### Secchi ###################################################################################
 
 sec_summary <- edi_data_with_regions_monthly %>%
-  select(-Temperature, -Conductivity, -Salinity, -Tide)
+  dplyr::select(-Temperature, -Conductivity, -Salinity, -Tide)
 
 sec_count <- sec_summary%>%group_by(Region, Year, Season)%>%summarize(n=n())
 
@@ -239,7 +241,7 @@ ggsave("sec_yearly_sampling_coverage.png", sec_sites_plot3,  width=14, height=8)
 #### Tide ###################################################################################
 
 tide_summary <- edi_data_with_regions_monthly %>%
-  select(-Temperature, -Conductivity, -Salinity, -Secchi)
+  dplyr::select(-Temperature, -Conductivity, -Salinity, -Secchi)
 
 tide_count <- sec_summary%>%group_by(Region, Year, Season)%>%summarize(n=n())
 
