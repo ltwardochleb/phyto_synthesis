@@ -6,6 +6,7 @@ library(lubridate)
 #read in dayflow .csv
 
 dayflow <- read_csv("./Data/Dayflow/dayflow-results-1997-2023.csv")
+wy_type <- read_csv("./Data/Dayflow/wy_class.csv")
 
 #Aggregate by month
 df_month <- dayflow %>% 
@@ -18,6 +19,23 @@ df_month <- dayflow %>%
 df_month$Date <- paste(df_month$Year,df_month$Month,sep="-")
 df_month$Date <- ym(df_month$Date)
 
+#add water year column by adding 3 months
+df_month$water_year <- as.numeric(format(df_month$Date %m+% months(3),"%Y"))
+
+#create seasonal period column
+df_month$period <- character(length(nrow(df_month)))
+df_month$period[df_month$Month >= 10 | df_month$Month <= 3] <- "Oct-Mar"
+df_month$period[df_month$Month >= 4 & df_month$Month <= 9] <- "Apr-Sep" #can change or add periods based on study time frame
+
+#pivot wider 
+df_wide<- df_month %>% 
+  pivot_wider(names_from=period,values_from=c(SAC,SJR)) %>%
+  group_by(water_year) %>%
+  summarise(across(`SAC_Oct-Mar`:`SJR_Apr-Sep`,\(x) sum(x,na.rm=TRUE)))
+
+#merge with Water year type based on runoff from DWR
+df_wide <- df_wide %>% merge(wy_type,by.x="water_year",by.y="WY")
+  
 #very rough plot of Sac and SJR
 ggplot() +
   geom_line(data=df_month,
