@@ -27,11 +27,11 @@ df_month$period <- character(length(nrow(df_month)))
 df_month$period[df_month$Month >= 10 | df_month$Month <= 3] <- "Oct-Mar"
 df_month$period[df_month$Month >= 4 & df_month$Month <= 9] <- "Apr-Sep" #can change or add periods based on study time frame
 
-#pivot wider 
+#pivot wider then summarize by year/season
 df_wide<- df_month %>% 
   pivot_wider(names_from=period,values_from=c(SAC,SJR)) %>%
   group_by(water_year) %>%
-  summarise(across(`SAC_Oct-Mar`:`SJR_Apr-Sep`,\(x) sum(x,na.rm=TRUE)))
+  summarize(across(`SAC_Oct-Mar`:`SJR_Apr-Sep`,\(x) sum(x,na.rm=TRUE)))
 
 #merge with Water year type based on runoff from DWR
 df_wide <- df_wide %>% merge(wy_type,by.x="water_year",by.y="WY")
@@ -44,7 +44,12 @@ ggplot() +
   geom_line(data=df_month,
             aes(Date,SJR))
 
+#bar chart by WY for Sac during non-irrigation season
+ggplot(df_wide,aes(water_year,`SAC_Oct-Mar`)) +
+  geom_col(aes(fill=`SAC Yr-type`))
+
+
 #more ideas - split out into critically dry, dry, wet, and average. There's likely some guidance on this somewhere. 
 #Aggregate by season?
-#How did Ellen define a wet/dry winter/spring? 
+#How did Ellen define a wet/dry spring/summer? 
 
