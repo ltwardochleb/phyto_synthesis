@@ -1,7 +1,6 @@
 # author: Ryan Hankins
 # Goal: plot the collection frequency of certain EDI data in different parts of the Bay Delta since 2008
-# EDI metrics: temperature, conductivity,salinity, water clarity, tidal condition
-
+# EDI metrics: temperature, conductivity,salinity, turbidity, tidal condition
 
 ## packages ############################################
 #install.packages("reshape2")
@@ -21,13 +20,12 @@ library(tidyr)
 library(ggrepel)
 library(ggspatial)
 library(sf)
+
 ## Read in the EDI dataset by running edi.731.7.r##########
 
 source("edi.731.7.r")
 
 dt1 <- as_tibble(dt1)
-
-
 
 # load the delta shapefile
 Delta<-deltamapr::R_EDSM_Subregions_Mahardja_FLOAT
@@ -42,12 +40,15 @@ edi_data <- dt1 %>%
 regions<-st_read("Rosies_regions_edited_shp/Rosies_regions_edited.shp")
 regions <- st_transform(regions, 26910)
 st_crs(regions)
+
 #add the subregions to the edi dataset
 #convert stations file to simple features so we can map index number to subregions
 geo_edi_data = edi_data %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
   #convert to UTMs so it's in the same coordinate reference system as the Delta shapefile
   st_transform(crs = 26910)
 st_crs(geo_edi_data)
+
+# Make an EDI dataset with the delta regions
 edi_data_with_regions <- st_join(geo_edi_data, regions["Regions"], join = st_intersects, left= TRUE) %>%  
   filter(!is.na(Regions)) %>%
   st_drop_geometry() %>%
