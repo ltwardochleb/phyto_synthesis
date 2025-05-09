@@ -231,13 +231,23 @@ EMP_df_map <- EMP_df %>%
   unique() %>%
   mutate()
 
+### Load regions shapefile
+Delta_regions<-read_sf('/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Delta_regions_shp/Rosies_regions_edited.shp')
+EMP_df_map_region<- EMP_df_map %>% na.omit()%>%st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+EMP_df_map_region_join<-st_join(Delta_regions,EMP_df_map_region)
+
+EMP_df_map_region_join <- EMP_df_map_region_join %>%
+  subset(select = c(Site_Abbrev, Regions)) %>% unique()
+
+EMP_df_map <- left_join(EMP_df_map, EMP_df_map_region_join)
 
 ### Make map
 colnames(EMP_df_map)
 Map_chla_n<-ggplot(data = deltamapr::WW_Delta) +
-  geom_sf(aes(),fill="#7fd6d4", color= "#7fd6d4") +
+  geom_sf(aes(),fill="#7fd6d4", color= "#73bfbd") +
+#  geom_sf(data= Delta_regions)+
   geom_point(data = EMP_df_map,
-             aes(x = Longitude, y = Latitude, fill= chla_n_total),color= "black",pch=21, size = 3) +
+             aes(x = Longitude, y = Latitude, fill= chla_n_total, shape= Regions, color = chla_n_total), size = 3) +
   coord_sf(xlim = c(-121.2, -122.15), ylim = c(37.66, 38.48), expand = FALSE)+
   theme_void(base_size = 20)+
   geom_text_repel(data = EMP_df_map, aes(x = Longitude, y = Latitude, label = Site_Abbrev), 
@@ -245,19 +255,24 @@ Map_chla_n<-ggplot(data = deltamapr::WW_Delta) +
                   bg.color = "white",
                   bg.r = 0.1)+ 
  # guides(fill=guide_legend(title="Legend"))+
-  theme(legend.position = c(.2, .85))+
+  theme(legend.position = c(.2, .85),
+        panel.background = element_rect(fill = "#616161", color = NA))+
+  
   annotation_scale(location = "bl",text_cex =1, pad_x = unit(0, "in")) +
   annotation_north_arrow(location = "bl", which_north = "true",
                          pad_x= unit(2.2, "in"),
                          style = ggspatial::north_arrow_orienteering(fill = c("black", "black"),
                                                                      text_size = 15))+
-  scale_fill_distiller(palette = "Spectral")
+  scale_fill_distiller(palette = "Spectral")+
+  scale_color_distiller(palette = "Spectral")+
+  scale_shape_manual(breaks = c('North Delta', 'Central', 'South', 'Confluence', 'Suisun Bay', 'Suisun Marsh'),
+                     values = c(24, 21, 22, 23, 25, 8))
 
 Map_chla_n
 ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/Map_chla_n.pdf",Map_chla_n, width = 10, height = 7 )
 
 Map_nh4_n<-ggplot(data = deltamapr::WW_Delta) +
-  geom_sf(aes(),fill="#7fd6d4", color= "#7fd6d4") +
+  geom_sf(aes(),fill="#7fd6d4", color= "#73bfbd") +
   geom_point(data = EMP_df_map,
              aes(x = Longitude, y = Latitude, fill= nh4_n_total),color= "black",pch=21, size = 3) +
   coord_sf(xlim = c(-121.2, -122.15), ylim = c(37.66, 38.48), expand = FALSE)+
