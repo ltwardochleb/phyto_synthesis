@@ -717,4 +717,193 @@ plot_all_param_EMP
 #looks like data completeness improves in 2017 for a lot of sites. 
 ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/plot_all_param_EMP.pdf",plot_all_param_EMP, width = 9, height = 8 )
 
+#### Phytoplankton community #####
+
+# load data
+
+Phyto_df_EMP<- read.csv('/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/EMP_Phyto_Data_2008-2023.csv')
+
+unique(Phyto_df_EMP$AlgalGroup)
+unique(Phyto_df_EMP$Station)
+Phyto_df_EMP<- Phyto_df_EMP %>%
+  filter(AlgalGroup!="Unknown") %>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Dinoflagellates", "Dinoflagellate", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Cryptophytes", "Cryptophyte", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Chrysophytes", "Chrysophyte", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Pennate Diatoms", "Pennate Diatom", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Ciliates", "Ciliate", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Green Algae", "Green Alga", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Centric Diatoms", "Centric Diatom", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Cyanobacterium", "Cyanobacteria", AlgalGroup)) %>%
+  rename(Site_Abbrev = Station)
+
+
+Phyto_df_EMP_presence<- Phyto_df_EMP%>%
+  subset(select = c(Site_Abbrev, Date)) %>%
+  unique() %>%
+  group_by(Site_Abbrev) %>%
+  mutate(Days_sampled= n()) %>%
+  subset(select = c(Site_Abbrev, Days_sampled)) %>% unique()
+
+Phyto_df_EMP_presence_spatial <-   left_join(Phyto_df_EMP_presence, EMP_df_map_region_join)
+Phyto_df_EMP_presence_spatial <- Phyto_df_EMP_presence_spatial %>% na.omit()
+  
+Phyto_df_EMP_presence_temporal<- Phyto_df_EMP%>%
+  subset(select = c(Site_Abbrev, Date)) %>%
+  unique() %>%
+  mutate(Date= as.Date(Date, format = "%m/%d/%y")) %>%
+  mutate(Year = substr(Date, 1, 4)) %>%
+  group_by(Site_Abbrev, Year) %>%
+  mutate(Days_sampled= n()) %>%
+  subset(select = c(Site_Abbrev,Year, Days_sampled)) %>% 
+  unique()
+  
+
+Phyto_df_EMP_presence_temporal <-   left_join(Phyto_df_EMP_presence_temporal, EMP_df_map_region_join)
+Phyto_df_EMP_presence_temporal <- Phyto_df_EMP_presence_temporal %>% na.omit() %>%
+  mutate(Site_region=paste(Regions,Site_Abbrev, sep= " "))%>%
+  mutate(Year = as.Date(paste0(Year, "-01-01")))
+
+### Make map
+
+EMP_df_map2 <- left_join(EMP_df_map, Phyto_df_EMP_presence_spatial)
+
+EMP_df_map2 <- EMP_df_map2 %>%
+  mutate(Days_sampled = ifelse(is.na(Days_sampled), 0, Days_sampled))
+
+Map_phyto_community_n<-ggplot(data = deltamapr::WW_Delta) +
+  geom_sf(aes(),fill="#7fd6d4", color= "#73bfbd") +
+  #  geom_sf(data= Delta_regions)+
+  geom_point(data = EMP_df_map2,
+             aes(x = Longitude, y = Latitude, fill= Days_sampled, shape= Regions, color = Days_sampled), size = 3) +
+  coord_sf(xlim = c(-121.2, -122.15), ylim = c(37.66, 38.48), expand = FALSE)+
+  theme_void(base_size = 20)+
+  geom_text_repel(data = EMP_df_map2, aes(x = Longitude, y = Latitude, label = Site_Abbrev), 
+                  fontface = "bold", nudge_x = c(), nudge_y = c(), color= "#AD2A1A",
+                  bg.color = "white",
+                  bg.r = 0.1)+ 
+  # guides(fill=guide_legend(title="Legend"))+
+  theme(legend.position = c(.27, .25),
+        panel.background = element_rect(fill = "#616161", color = NA),
+        legend.key = element_rect(fill = "white"),
+        legend.background  = element_rect(fill = "white"),
+        legend.direction = "vertical", legend.box = "horizontal")+
+  
+  annotation_scale(location = "bl",text_cex =1, pad_x = unit(0, "in")) +
+  annotation_north_arrow(location = "bl", which_north = "true",
+                         pad_x= unit(2.2, "in"),
+                         style = ggspatial::north_arrow_orienteering(fill = c("black", "black"),
+                                                                     text_size = 15))+
+  scale_fill_distiller(palette = "Spectral")+
+  scale_color_distiller(palette = "Spectral")+
+  scale_shape_manual(breaks = c('North Delta', 'Central', 'South', 'Confluence', 'Suisun Bay', 'Suisun Marsh'),
+                     values = c(24, 21, 22, 23, 25, 8))
+
+Map_phyto_community_n
+ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/Map_phyto_community_n.pdf",Map_phyto_community_n, width = 6.5, height = 7 )
+
+### Temporal plot
+plot_phyto_community_EMP<-ggplot(Phyto_df_EMP_presence_temporal, aes(x = as.Date(Year), y = Site_region, fill = Days_sampled)) +
+  geom_tile()+
+  theme_classic(base_size = 20)+
+  scale_fill_distiller(palette = "Spectral")+
+  scale_x_date( breaks = "2 years", date_labels="%Y")+
+  labs(x= "Date", y= "Site")
+plot_phyto_community_EMP
+ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/plot_phyto_community_EMP.pdf",plot_phyto_community_EMP, width = 12, height = 8 )
+
+#### Cyanobacteria alone
+
+Phyto_df_EMP<- read.csv('/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/EMP_Phyto_Data_2008-2023.csv')
+
+unique(Phyto_df_EMP$AlgalGroup)
+unique(Phyto_df_EMP$Station)
+Phyto_df_EMP_Cyano<- Phyto_df_EMP %>%
+  filter(AlgalGroup!="Unknown") %>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Dinoflagellates", "Dinoflagellate", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Cryptophytes", "Cryptophyte", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Chrysophytes", "Chrysophyte", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Pennate Diatoms", "Pennate Diatom", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Ciliates", "Ciliate", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Green Algae", "Green Alga", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Centric Diatoms", "Centric Diatom", AlgalGroup))%>%
+  mutate(AlgalGroup = ifelse(AlgalGroup=="Cyanobacterium", "Cyanobacteria", AlgalGroup)) %>%
+  rename(Site_Abbrev = Station) %>%
+  subset(AlgalGroup=="Cyanobacteria")
+
+
+Phyto_df_EMP_presence<- Phyto_df_EMP_Cyano%>%
+  subset(select = c(Site_Abbrev, Date)) %>%
+  unique() %>%
+  group_by(Site_Abbrev) %>%
+  mutate(Days_sampled= n()) %>%
+  subset(select = c(Site_Abbrev, Days_sampled)) %>% unique()
+
+Phyto_df_EMP_presence_spatial <-   left_join(Phyto_df_EMP_presence, EMP_df_map_region_join)
+Phyto_df_EMP_presence_spatial <- Phyto_df_EMP_presence_spatial %>% na.omit()
+
+Phyto_df_EMP_presence_temporal<- Phyto_df_EMP_Cyano%>%
+  subset(select = c(Site_Abbrev, Date)) %>%
+  unique() %>%
+  mutate(Date= as.Date(Date, format = "%m/%d/%y")) %>%
+  mutate(Year = substr(Date, 1, 4)) %>%
+  group_by(Site_Abbrev, Year) %>%
+  mutate(Days_sampled= n()) %>%
+  subset(select = c(Site_Abbrev,Year, Days_sampled)) %>% 
+  unique()
+
+
+Phyto_df_EMP_presence_temporal <-   left_join(Phyto_df_EMP_presence_temporal, EMP_df_map_region_join)
+Phyto_df_EMP_presence_temporal <- Phyto_df_EMP_presence_temporal %>% na.omit() %>%
+  mutate(Site_region=paste(Regions,Site_Abbrev, sep= " "))%>%
+  mutate(Year = as.Date(paste0(Year, "-01-01")))
+
+### Make map
+
+EMP_df_map3 <- left_join(EMP_df_map, Phyto_df_EMP_presence_spatial)
+
+EMP_df_map3 <- EMP_df_map3 %>%
+  mutate(Days_sampled = ifelse(is.na(Days_sampled), 0, Days_sampled))
+
+Map_phyto_community_n<-ggplot(data = deltamapr::WW_Delta) +
+  geom_sf(aes(),fill="#7fd6d4", color= "#73bfbd") +
+  #  geom_sf(data= Delta_regions)+
+  geom_point(data = EMP_df_map3,
+             aes(x = Longitude, y = Latitude, fill= Days_sampled, shape= Regions, color = Days_sampled), size = 3) +
+  coord_sf(xlim = c(-121.2, -122.15), ylim = c(37.66, 38.48), expand = FALSE)+
+  theme_void(base_size = 20)+
+  geom_text_repel(data = EMP_df_map3, aes(x = Longitude, y = Latitude, label = Site_Abbrev), 
+                  fontface = "bold", nudge_x = c(), nudge_y = c(), color= "#AD2A1A",
+                  bg.color = "white",
+                  bg.r = 0.1)+ 
+  # guides(fill=guide_legend(title="Legend"))+
+  theme(legend.position = c(.27, .25),
+        panel.background = element_rect(fill = "#616161", color = NA),
+        legend.key = element_rect(fill = "white"),
+        legend.background  = element_rect(fill = "white"),
+        legend.direction = "vertical", legend.box = "horizontal")+
+  
+  annotation_scale(location = "bl",text_cex =1, pad_x = unit(0, "in")) +
+  annotation_north_arrow(location = "bl", which_north = "true",
+                         pad_x= unit(2.2, "in"),
+                         style = ggspatial::north_arrow_orienteering(fill = c("black", "black"),
+                                                                     text_size = 15))+
+  scale_fill_distiller(palette = "Spectral")+
+  scale_color_distiller(palette = "Spectral")+
+  scale_shape_manual(breaks = c('North Delta', 'Central', 'South', 'Confluence', 'Suisun Bay', 'Suisun Marsh'),
+                     values = c(24, 21, 22, 23, 25, 8))
+
+Map_phyto_community_n
+ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/Map_phyto_cyanobacteria_n.pdf",Map_phyto_community_n, width = 6.5, height = 7 )
+
+### Temporal plot
+plot_phyto_community_EMP<-ggplot(Phyto_df_EMP_presence_temporal, aes(x = as.Date(Year), y = Site_region, fill = Days_sampled)) +
+  geom_tile()+
+  theme_classic(base_size = 20)+
+  scale_fill_distiller(palette = "Spectral")+
+  scale_x_date( breaks = "2 years", date_labels="%Y")+
+  labs(x= "Date", y= "Site")
+plot_phyto_community_EMP
+ggsave("/Users/kleathers/Library/CloudStorage/OneDrive-DOI/Shared Documents - BGC Projects (v3)/BGC Proposals and Projects/Active Projects/BOR/Nuts TS Analysis/Phytoplankton_synthesis_project/Figures/plot_phyto_cyanobacteria_EMP.pdf",plot_phyto_community_EMP, width = 12, height = 8 )
+
 
