@@ -1,0 +1,259 @@
+---
+title: "Tuolumne Stock-Recruit Analysis"
+author: "Laura"
+date: "2024-12-18"
+output: html_document
+---
+
+Setup
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+Read in packages
+```{r Read in Packages, include=FALSE}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(splines)
+library(tidyverse)
+library(caret)
+library(ggrepel)
+library(here)
+library(FSA)
+library(nlstools)
+library(corrplot)
+theme_set(theme_classic())
+```
+
+File Location
+```{r File Location, include=FALSE}
+data_input <- here("~/Sac_Delta_analyses/stock_recruit/tuolumne-stock-recruit-habitat-files")
+figures<- here("~/Sac_Delta_analyses/stock_recruit/figures")  
+waterford_rst<-read_csv(here("Waterford_RST_2022.csv"))
+```
+
+Read-in and manipulate data
+```{r Read-in and manipulate data, include=FALSE}
+#join covariate data, log values for habitat and flow, and calc. z-scores
+tuol_flow<-read_csv(here(data_input, "flow_covariates_tuolumne.csv"))%>%select(-c(gage_id,source))%>%mutate(log_value=log(value))%>%pivot_wider(names_from=covariate, values_from=c(value, log_value)) #log flow because of diminishing returns of increasing flow (as in Munsch et al. 2020)
+
+tuol_temp<-read_csv(here(data_input, "temperature_covariates_tuolumne.csv"))%>%na.omit()%>%mutate(log_value=log(value))%>%pivot_wider(names_from=covariate, values_from=c(value, log_value))
+
+tuol_habitat<-read_csv(here(data_input, "habitat_covariates_tuolumne.csv"))%>%select(-stream)%>%mutate(log_value=log(value+1))%>%pivot_wider(names_from=c(habitat_type, covariate), values_from=c(value, log_value)) 
+waterford<-waterford_rst%>%left_join(tuol_flow,by=c("Outmigration.year"="year"))%>%left_join(tuol_temp,by=c("Outmigration.year"="year"))%>%left_join(tuol_habitat, by=c("Outmigration.year"="year"))%>%filter(Outmigration.year!=2020)%>%select(-c("covariate_type.x", "covariate_type.y"))%>%pivot_longer(cols=c(-Outmigration.year, -spawner_abundance, -Waterford_abundance, -Grayson_abundance), names_to="Covariate_name", values_to="Covariate_value") #remove 2020 due to COVID sampling gaps
+```
+
+Explore Relationships Among Juvenile Abundance and Covariates
+```{r Explore Relationships Among Juvenile Abundance and Covariates}
+ggplot(waterford, aes(x=Covariate_value, y=(log(Waterford_abundance))))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw()
+
+ggplot(waterford, aes(x=Covariate_value, y=(log(Grayson_abundance))))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw()
+```
+
+Examine collinearity among covariates
+```{r Examine collinearity among covariates, include=FALSE}
+#filter covariates
+covariates_list<-c("log_value_spawning_mean_spawn_acres", "log_value_spawning_mean_wetted_acres", "log_value_in_channel_mean_ic_rearing_acres", "log_value_in_channel_mean_wetted_acres", "log_value_total_rearing_mean_total_rearing_acres", "log_value_total_rearing_mean_wetted_acres", "log_value_floodplain_mean_acres_inundated_wua", "log_value_floodplain_mean_acres_inundated_wetted_area","log_value_mean_temp_oct_nov","log_value_mean_temp_may","log_value_mean_jan_may_flow")
+waterford_reduced<-waterford%>%filter(Covariate_name %in% covariates_list)%>%na.omit()
+
+waterford_mat<-waterford_reduced%>%pivot_wider(names_from=Covariate_name, values_from=Covariate_value)%>%select(-c(Outmigration.year, spawner_abundance, Waterford_abundance, Grayson_abundance))%>%na.omit()
+m=cor(waterford_mat)
+colnames(m)<-c("Jan-May flow", "Oct-Nov temp", "Spawning wetted", "Spawning WUA", "Floodplain wetted","Floodplain WUA", "In-channel wetted", "In-channel WUA", "Total rearing wetted", "Total rearing WUA", "May temp") 
+rownames(m)<-c("Jan-May flow", "Oct-Nov temp", "Spawning wetted", "Spawning WUA", "Floodplain wetted","Floodplain WUA", "In-channel wetted", "In-channel WUA", "Total rearing wetted", "Total rearing WUA", "May temp")
+png(filename="~/Sac_Delta_analyses/stock_recruit/figures/Tuolumne_corrplot.png", width=800, height=600)
+corrplot(m, method = "number", type = "upper") # show only upper side
+dev.off()
+```
+
+```{r print corrplot}
+corrplot(m, method = "number", type = "upper") 
+```
+
+Linear Waterford models (upstream RST) single environmental covariate
+```{r Linear Waterford models with single environmental covariate (upstream RST)}
+linear_sr_waterford<-function(covariate){
+  {lm(log(Waterford_abundance)~log(spawner_abundance) + Covariate_value -1, data=filter(waterford_reduced, covariate==Covariate_name), na.action=na.omit)
+  }
+}
+
+linear_sr_waterford_models<-map(set_names(unique(waterford_reduced$Covariate_name)), linear_sr_waterford)
+linear_sr_models_resids<-map_dfr(linear_sr_waterford_models, function(x) resid(x)%>%as_tibble(), .id = "Covariate_name")%>%
+  dplyr::rename(resid=value)
+
+ggplot(linear_sr_models_resids, aes(x=resid))+
+  geom_histogram(bins=15)+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw()                               
+
+map(linear_sr_waterford_models, summary)
+map(linear_sr_waterford_models, AIC)
+map(linear_sr_waterford_models, coefficients)
+```
+
+Linear Waterford models with Oct-Nov temp and spring covariates
+```{r Linear Waterford models with Oct_nov temp + spring covariates}
+
+waterford_reduced<-waterford_reduced%>%mutate(covariate_season=if_else(Covariate_name%in%c("log_value_mean_temp_oct_nov", "log_value_spawning_mean_wetted_acres", "log_value_spawning_mean_spawn_acres"), "fall", "spring")) #dive into two data frames and then recombine
+waterford_reduced_fall<-waterford_reduced%>%filter(covariate_season=="fall")%>%rename(c(Fall_covariate_name=Covariate_name, Fall_covariate_value=Covariate_value))%>%select(-covariate_season)
+waterford_reduced_spring<-waterford_reduced%>%filter(covariate_season=="spring")%>%rename(c(Spring_covariate_name=Covariate_name, Spring_covariate_value=Covariate_value))%>%select(-covariate_season)
+waterford_reduced_fall_spring<-full_join(waterford_reduced_fall, waterford_reduced_spring)
+
+#run with temperature as the fall covariate value
+waterford_reduced_fall_spring_temp<-waterford_reduced_fall_spring%>%filter(Fall_covariate_name=="log_value_mean_temp_oct_nov")
+linear_sr_waterford_fall_spring_temp<-function(covariate){
+  {lm(log(Waterford_abundance)~log(spawner_abundance) + Fall_covariate_value + Spring_covariate_value -1, data=filter(waterford_reduced_fall_spring_temp, covariate==Spring_covariate_name), na.action=na.omit)
+  }
+}
+
+linear_sr_waterford_models_fall_spring_temp<-map(set_names(unique(waterford_reduced_fall_spring_temp$Spring_covariate_name)), linear_sr_waterford_fall_spring_temp)
+linear_sr_models_resids_fall_spring_temp<-map_dfr(linear_sr_waterford_models_fall_spring_temp, function(x) resid(x)%>%as_tibble(), .id = "Spring_covariate_name")%>%
+  dplyr::rename(resid=value)
+
+ggplot(linear_sr_models_resids_fall_spring_temp, aes(x=resid))+
+  geom_histogram(bins=15)+
+  facet_wrap(~Spring_covariate_name, scales = "free")+
+  theme_bw()                               
+
+map(linear_sr_waterford_models_fall_spring_temp, summary)
+map(linear_sr_waterford_models_fall_spring_temp, AIC)
+linear_sr_coefficients_fall_spring_temp<-map(linear_sr_waterford_models_fall_spring_temp, coefficients)
+```
+
+Linear Waterford models with Spawning WUA and spring covariates
+```{r Linear Waterford models with Spawning WUA and spring covariates}
+
+waterford_reduced_fall_spring_spawn_wua<-waterford_reduced_fall_spring%>%filter(Fall_covariate_name=="log_value_spawning_mean_spawn_acres")
+linear_sr_waterford_fall_spring_spawn_wua<-function(covariate){
+  {lm(log(Waterford_abundance)~log(spawner_abundance) + Fall_covariate_value + Spring_covariate_value -1, data=filter(waterford_reduced_fall_spring_spawn_wua, covariate==Spring_covariate_name), na.action=na.omit)
+  }
+}
+
+linear_sr_waterford_models_fall_spring_spawn_wua<-map(set_names(unique(waterford_reduced_fall_spring_spawn_wua$Spring_covariate_name)), linear_sr_waterford_fall_spring_spawn_wua)
+linear_sr_models_resids_fall_spring_spawn_wua<-map_dfr(linear_sr_waterford_models_fall_spring_spawn_wua, function(x) resid(x)%>%as_tibble(), .id = "Spring_covariate_name")%>%
+  dplyr::rename(resid=value)
+
+ggplot(linear_sr_models_resids_fall_spring_spawn_wua, aes(x=resid))+
+  geom_histogram(bins=15)+
+  facet_wrap(~Spring_covariate_name, scales = "free")+
+  theme_bw()                               
+
+map(linear_sr_waterford_models_fall_spring_spawn_wua, summary)
+map(linear_sr_waterford_models_fall_spring_spawn_wua, AIC)
+linear_sr_coefficients_fall_spring_spawn_wua<-map(linear_sr_waterford_models_fall_spring_spawn_wua, coefficients)
+```
+
+Linear Waterford model with spawning WUA and Oct-Nov temp
+```{r Linear Waterford model with spawning WUA and Oct-Nov temp}
+
+waterford_wide<-waterford_reduced%>%pivot_wider(names_from= Covariate_name, values_from = Covariate_value)
+waterford_fall_lm2<-lm(log(Waterford_abundance)~log(spawner_abundance) + log_value_mean_temp_oct_nov + log_value_spawning_mean_spawn_acres -1, data=waterford_wide, na.action=na.omit)
+AIC(waterford_fall_lm2)
+summary(waterford_fall_lm2)
+```
+
+Waterford Ricker Models: single environmental covariate
+```{r Waterford Ricker Models with single environmental covariate}
+r<-srFuns(type="Ricker", param=3)
+rs<-srStarts(Waterford_abundance~spawner_abundance, data=waterford_reduced, type="Ricker")
+unlist(rs)
+
+#run Ricker model with no covariates
+r_starters_list <- list(a = rs$a,
+                        b = rs$b)
+
+waterford_ricker <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance)),
+             data = waterford_reduced,
+             start = r_starters_list)
+summary(waterford_ricker)
+AIC(waterford_ricker)
+plot(waterford_ricker)
+
+r_starters_list2 <- list(a = rs$a,
+                        b = rs$b, f=0.2)
+
+
+#flow covariate model- refit on the waterford_reduced dataset
+waterford_ricker_flow <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_mean_jan_may_flow,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=1), lower = c(0.1, 0.0000001, 0.1), algorithm = "port")
+summary(waterford_ricker_flow)
+AIC(waterford_ricker_flow)
+
+#spring temperature covariate model
+waterford_ricker_may_temp <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_mean_temp_may,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=-1), lower = c(0.1, 0.0000001, -5), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_may_temp)
+AIC(waterford_ricker_may_temp)
+
+#fall temperature covariate model
+waterford_ricker_oct_temp <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_mean_temp_oct_nov,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=-1), lower = c(0.1, 0.0000001, -5), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_oct_temp)
+AIC(waterford_ricker_oct_temp)
+
+#spawning wetted area covariate model
+waterford_ricker_spawning_wetted <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_spawning_mean_wetted_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=1), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_spawning_wetted)
+AIC(waterford_ricker_spawning_wetted)
+
+#spawning wua covariate model
+waterford_ricker_spawning_wua <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_spawning_mean_spawn_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=2), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_spawning_wua)
+AIC(waterford_ricker_spawning_wua)
+
+#in-channel wetted acres
+waterford_ricker_in_channel_wetted <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_in_channel_mean_wetted_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=1), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_in_channel_wetted)
+AIC(waterford_ricker_in_channel_wetted)
+
+#in-channel wua
+waterford_ricker_in_channel_wua <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_in_channel_mean_ic_rearing_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=1), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_in_channel_wua)
+AIC(waterford_ricker_in_channel_wua)
+
+#total rearing wetted
+waterford_ricker_total_rearing_wetted <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_total_rearing_mean_wetted_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=1), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_total_rearing_wetted)
+AIC(waterford_ricker_total_rearing_wetted)
+
+#total rearing wua
+waterford_ricker_total_rearing_wua <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_total_rearing_mean_total_rearing_acres,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=2), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_total_rearing_wua)
+AIC(waterford_ricker_total_rearing_wua)
+
+#floodplain rearing wetted
+waterford_ricker_floodplain_wetted <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_floodplain_mean_acres_inundated_wetted_area,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=0.3), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_floodplain_wetted)
+AIC(waterford_ricker_floodplain_wetted)
+
+#floodplain rearing wua
+waterford_ricker_floodplain_wua <- nls(log(Waterford_abundance) ~
+               log((a * spawner_abundance) * exp(-b * spawner_abundance))+ f*log_value_floodplain_mean_acres_inundated_wua,
+             data = waterford_wide, start = c(a = rs$a, b = rs$b, f=0.3), lower = c(0.1, 0.0000001, 0), algorithm = "port", nls.control(maxiter=150,minFactor = 0.00000000000001))
+summary(waterford_ricker_floodplain_wua)
+AIC(waterford_ricker_floodplain_wua)
+```
