@@ -23,4 +23,3 @@ df_month <- dayflow %>%
 
 #EDI ----------
 
-edi <- read.csv("Data/edi_clean.csv")
