@@ -91,4 +91,4 @@ EMP_df <- EMP_df %>%
 
 #MERGE EMP DWQ WITH DAYFLOW
 
-EMP_comb <- merge(EMP_df,df_month,by="year_month")
+EMP_comb <- merge(EMP_df,df_month,by="year_month",all.x=TRUE)
