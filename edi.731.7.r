@@ -20,7 +20,7 @@ options(HTTPUserAgent="EDI_CodeGen")
 
 inUrl1  <- "https://pasta.lternet.edu/package/data/eml/edi/731/7/6c5f35b1d316e39c8de0bfadfb3c9692" 
 infile1 <- tempfile()
-try(download.file(inUrl1,infile1,method="curl",extra=paste0(' -A "',getOption("HTTPUserAgent"),'"')))
+try(download.file(inUrl1,infile1,method="wininet",extra=paste0(' -A "',getOption("HTTPUserAgent"),'"')))
 if (is.na(file.size(infile1))) download.file(inUrl1,infile1,method="auto")
 
                    
@@ -469,7 +469,7 @@ detach(dt1)
 
 inUrl2  <- "https://pasta.lternet.edu/package/data/eml/edi/731/7/0f71269d5347e1c4318424f7efda7503" 
 infile2 <- tempfile()
-try(download.file(inUrl2,infile2,method="curl",extra=paste0(' -A "',getOption("HTTPUserAgent"),'"')))
+try(download.file(inUrl2,infile2,method="wininet",extra=paste0(' -A "',getOption("HTTPUserAgent"),'"')))
 if (is.na(file.size(infile2))) download.file(inUrl2,infile2,method="auto")
 
                    
