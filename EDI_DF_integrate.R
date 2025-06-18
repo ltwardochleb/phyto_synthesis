@@ -3,7 +3,7 @@ library(tidyverse)
 library(lubridate)
 
 #Dayflow -------------
-#QUESTION: does it make more sense to do the month average or match with the discrete WQ date and summarize there?
+
 df1 <- read_csv("Data/Dayflow/dayflow-results-1970-1983.csv") %>%
   select(c("Date","Year","Month","SAC","SJR","OUT")) #Sac, SJR, Delta Outflow
 
@@ -50,7 +50,7 @@ LOD <- function(data,colname_sign) {
           min=0,
           max=data[[index+1]][data[[index]] %in% "<"& 
                                 !(data[[index+1]] == 0) &
-                                !is.na(data[[index+1]])])#or whatever factor we want to replace with#or whatever factor we want to replace with
+                                !is.na(data[[index+1]])]) #or whatever factor we want to replace with
   return(data)
 }
 
@@ -69,8 +69,6 @@ dt1_mo <- dt1 %>%
 help(mutate)
 dt_df <- merge(dt1_mo,df_month,by="year_month",all.x=T)
 write.csv(dt_df,"Data/edi_df_integrate_monthly.csv")
-
-#QUESTION: how far back are we going? 1979
 
 
 # OLD WIP -------------
