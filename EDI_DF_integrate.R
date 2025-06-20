@@ -5,13 +5,15 @@ library(lubridate)
 #Dayflow -------------
 
 df1 <- read_csv("Data/Dayflow/dayflow-results-1970-1983.csv") %>%
-  select(c("Date","Year","Month","SAC","SJR","OUT")) #Sac, SJR, Delta Outflow
+  select(c("Date","Year","Month","SAC","SJR","OUT","EXPORT")) #Sac, SJR, Delta Outflow
 
 df2 <- read_csv("Data/Dayflow/dayflow-results-1984-1996.csv") %>%
-  select(c("Date","Year","Month","SAC","SJR","OUT")) #Sac, SJR, Delta Outflow
+  select(c("Date","Year","Month","SAC","SJR","OUT","EXPORT")) #Sac, SJR, Delta Outflow
 
 df3 <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv") %>%
-  select(c("Date","Year","Month","SAC","SJR","OUT")) #Sac, SJR, Delta Outflow
+  select(c("Date","Year","Month","SAC","SJR","OUT","EXPORTS")) #Sac, SJR, Delta Outflow
+
+names(df3)[7] <- "EXPORT"
 
 dayflow <- rbind(df1,df2,df3)
 
@@ -57,7 +59,7 @@ LOD <- function(data,colname_sign) {
 colname_sign <- dt1 %>% select(ends_with("Sign")) %>% colnames
 
 for(n in 1:21) {
-  dt1 <- LOD2(dt1,colname_sign[n])
+  dt1 <- LOD(dt1,colname_sign[n])
 }
 
 # AGGREGATE TO MONTH AND MERGE ---------------
@@ -118,18 +120,3 @@ write.csv(dt_df,"Data/edi_df_integrate_monthly.csv")
 # for(n in 1:21) {
 #   dt1 <- LOD2(dt1,colname_sign[n])
 # }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
