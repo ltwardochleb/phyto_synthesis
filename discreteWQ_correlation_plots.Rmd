@@ -1,0 +1,152 @@
+---
+title: "discreteWQ_correlation_plots"
+author: "Ryan"
+---
+
+```{r include = FALSE}
+library(dataRetrieval)
+library(ggplot2)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(splines)
+library(tidyverse)
+library(caret)
+library(ggrepel)
+library(here)
+library(FSA)
+library(nlstools)
+library(corrplot)
+theme_set(theme_classic())
+library(spacetools) #use function GGdist to calculate distance from Golden Gate Bridge
+library(deltamapr)
+lapply(c("deltamapr", "tidyverse", "lubridate", "sf"), require, character.only = TRUE)
+```
+
+read in data
+```{r message = FALSE}
+edi<-read_csv("Data/edi_df_integrate_monthly.csv") 
+
+edi_subset <- subset(edi, select = c(year_month,Longitude,Latitude,Temperature,Conductivity, Secchi, DissSilica, pH,Chlorophyll,DissAmmonia, DissNitrateNitrite,TotPhos,DissOrthophos, Year,Month, SAC, SJR, OUT) )%>%filter(!is.na(Latitude) & !is.na(Longitude))
+```
+
+Integrate WYT Data
+```{r message = FALSE}
+wyt <- read_csv("Data/WSIHIST_CDEC.csv") 
+wyt <- wyt %>% rename(Year = WY)
+edi_subset <- merge(edi_subset, wyt, by='Year')
+edi_subset <- edi_subset %>% select(-`Oct-Mar`, -`Apr-Jul`, -WYsum)
+```
+
+
+Adjust datasets to include seasons and regions
+```{r include = FALSE}
+regions<-st_read("Regions_shp/Rosies_regions_edited.shp")
+regions <- st_transform(regions, 26910)
+st_crs(regions)
+
+#add the subregions to the edi dataset
+geo_edi_data = edi_subset %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  #convert to UTMs so it's in the same coordinate reference system as the Delta shapefile
+  st_transform(crs = 26910)
+
+st_crs(geo_edi_data)
+
+# Make an EDI dataset with the delta regions
+edi_data_with_regions <- st_join(geo_edi_data, regions["Regions"], join = st_intersects, left= TRUE) %>%  
+  filter(!is.na(Regions)) %>%
+  st_drop_geometry() #%>%
+  #distinct(Datetime, .keep_all = TRUE)
+
+```
+
+Summarize long-term sample coverage by season, year, region
+```{r}
+
+#convert dates to months and seasons
+edi_data_with_regions_monthly <-edi_data_with_regions%>%mutate(Month = month(year_month), #create a month and year variable
+                                    Year = year(year_month), 
+                                    Year=if_else(Month==12, Year+1, Year), # Move Decembers to the following year
+                                    Season=case_when(Month%in%3:5 ~ "Spring", # Create seasonal variables
+                                                     Month%in%6:8 ~ "Summer",
+                                                     Month%in%9:11 ~ "Fall",
+                                                     Month%in%c(12, 1, 2) ~ "Winter",
+                                                     TRUE ~ NA_character_))
+# make a numeric season variable for corplots
+
+#edi_data_with_regions_monthly$Season <- as.factor(edi_data_with_regions_monthly$Season)
+#edi_data_with_regions_monthly$Season_num <- as.numeric(edi_data_with_regions_monthly$Season)
+
+```
+
+Loop through different filter parameters to output pdf of tables
+```{r}
+library(dplyr)
+library(corrplot)
+
+
+seasonal_values <- c("Spring", "Summer", "Fall", "Winter")
+#WYT_values <- c("W","AN","BN","D","C")
+regional_values <- c("South","North Delta","Confluence","Suisun Bay","Central","Suisun Marsh")
+
+# Open a PDF device to save all plots
+pdf("correlation_plots.pdf", width = 8, height = 8)
+
+
+df <- edi_data_with_regions_monthly
+  
+numeric_df <- select_if(df, is.numeric)
+  
+m <- cor(numeric_df, use = "pairwise.complete.obs")
+  
+plot_title <- paste("Complete timeframe")
+  
+corrplot(m, method = "pie", type = "upper", main = plot_title, mar = c(0, 0, 2, 0))
+  
+
+for (val in seasonal_values) {
+  
+  df <- edi_data_with_regions_monthly %>% filter(Season == val)
+  
+  numeric_df <- select_if(df, is.numeric)
+  
+  m <- cor(numeric_df, use = "pairwise.complete.obs")
+  
+  plot_title <- paste(val)
+  
+  corrplot(m, type = "upper", main = plot_title, mar = c(0, 0, 2, 0))
+}
+
+for (val in regional_values) {
+  
+  df <- edi_data_with_regions_monthly %>% filter(Regions == val)
+  
+  numeric_df <- select_if(df, is.numeric)
+  
+  m <- cor(numeric_df, use = "pairwise.complete.obs")
+  
+  plot_title <- paste(val)
+  
+  corrplot(m, type = "upper", main = plot_title, mar = c(0, 0, 2, 0))
+}
+
+
+for (val in regional_values) {
+  for (vals in seasonal_values) {
+    df <- edi_data_with_regions_monthly %>% filter(Regions == val & Season == vals)
+    
+    numeric_df <- select_if(df, is.numeric)
+    
+    m <- cor(numeric_df, use = "pairwise.complete.obs")
+    
+    plot_title <- paste(val, "-", vals)
+    
+    corrplot(m, type = "upper", main = plot_title, mar = c(0, 0, 2, 0))
+  }
+}
+
+# Close the PDF device
+dev.off()
+
+```
+
