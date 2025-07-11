@@ -6,11 +6,9 @@ library(MuMIn)
 library(gratia)
 library(sf)
 
-#Setting up GAMs for threshold
-
 wq <- read.csv("Data/edi_df_integrate_monthly.csv")
 
-#1. Assign region to each station
+#1. Assign region to each station --------
 # do we already have a regional assignment somewhere?
 
 regions<-st_read("Regions_shp/Rosies_regions_edited.shp") %>%
@@ -27,17 +25,43 @@ wq <- st_join(wq.sf, regions["Regions"], join = st_intersects, left= TRUE) %>%
   filter(!is.na(Regions)) %>%
   st_drop_geometry()
 
-#2. Calculate monthly average values for each region
-
-wq_r_sum <- wq %>% 
-  group_by(Regions,year_month) %>%
-  summarize_if(is.numeric,mean,na.rm=TRUE)
-
-#3. Assign a season to each month 
+#2. Assign a season to each month --------
 wq$season <- replicate(nrow(wq),NA)
 wq$season[wq$Month %in% c(12,1,2)] <- "Winter"
 wq$season[wq$Month %in% c(3,4,5)] <- "Spring"
 wq$season[wq$Month %in% c(6,7,8)] <- "Summer"
 wq$season[wq$Month %in% c(9,10,11)] <- "Fall"
 
+wq_season <- wq %>% group_by(Month) %>%
+  summarize(season=unique(season))
 
+#3. Calculate monthly average values for each region --------
+
+wq_r_sum <- wq %>% 
+  group_by(Regions,year_month) %>%
+  summarize_if(is.numeric,mean,na.rm=TRUE) %>%
+  merge(wq_season,by="Month",all.x=T)
+
+#4. Assign chlorophyll thresholds? --------
+#idk if we ever decided on this but I can change it if I need to, will stick with 5 for now
+wq$bloom <- replicate(nrow(wq),NA)
+wq$bloom[wq$Chlorophyll >= 5] <- as.factor(1)
+wq$bloom[wq$Chlorophyll < 5] <- as.factor(0)
+
+#5. set up the gam -----------
+# NH4 + PO4 + (NO2+NO3) + temperature + turbidity + conductivity + Sac inflow + Sac Valley index + clam biomass + Season + lag(Sac inflow) + previous year(Sac Valley index) + lag(NH4) + lag(PO4) + lag (NO2+NO3) + (1|station) + (1|Month) 
+
+###### TO DO ######
+#NEED TO PULL IN SAC VALLEY INDEX TO OG DATA INTEGRATION
+#Laura to pull in clam biomass
+#how do I include the character categories?
+
+
+
+gam(bloom ~ s(TotAmmonia,TotPhos,DissNitrateNitrite,Temperature,TurbidityNTU,Conductivity,SAC,k=100),
+    data = wq,
+    family = binomial,
+    method = 'REML')
+
+
+help(mgcv)
