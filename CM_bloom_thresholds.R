@@ -137,7 +137,6 @@ tiff("Figures/Bloom detection/Threshold_10ugL.tiff", units="in", width=16, heigh
 ggarrange(p1,p2,p3,p4,p5,p6,ncol=2,nrow=3)
 dev.off()
 
-
 # Threshold - quantile ----------------------------------------------------
 
 # Change depending on which quantile you'd like to examine
@@ -1873,6 +1872,57 @@ ggarrange(p31,p32,p33,p34,p35,p36,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 
+
+# Std deviation -----------------------------------------------------------
+# 1 standard deviation above the mean
+
+# Suisun Marsh
+test <- CM %>% filter(Regions=="Suisun Marsh") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p37 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Marsh")
+
+# Suisun Bay
+test <- CM %>% filter(Regions=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p38 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Bay")
+
+# Confluence
+test <- CM %>% filter(Regions=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p39 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Confluence")
+
+# North Delta
+test <- CM %>% filter(Regions=="North Delta") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p40 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("North Delta")
+
+# Central Delta
+test <- CM %>% filter(Regions=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p41 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Central Delta")
+
+# South Delta
+test <- CM %>% filter(Regions=="South") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p42 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("South Delta")
+
+tiff("Figures/Bloom detection/stdev.tiff", units="in", width=16, height=9, res=300)
+ggarrange(p37,p38,p39,p40,p41,p42,ncol=2,nrow=3,common.legend=TRUE)
+dev.off()
+
+
 # Regional plots, method subplots -----------------------------------------
 
 p1<- p1+ggtitle("Chl > 10 ug/L")
@@ -1881,8 +1931,9 @@ p7<- p7+ggtitle("Chl > 75th quantile")
 p13<-p13+ggtitle("Chl > 75% of median")
 p25<- p25+ggtitle("Chl > 75th annual quantile")
 p19<- p19+ggtitle("Chl > 75% of annual median")
+p37 <- p37+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_SuisunMarsh.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p1,p31,p7,p13,p25,p19,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p37,p31,p7,p13,p25,p19,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 p2<- p2+ggtitle("Chl > 10 ug/L")
@@ -1891,8 +1942,9 @@ p8<- p8+ggtitle("Chl > 75th quantile")
 p14<-p14+ggtitle("Chl > 75% of median")
 p26<- p26+ggtitle("Chl > 75th annual quantile")
 p20<- p20+ggtitle("Chl > 75% of annual median")
+p38 <- p38+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_SuisunBay.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p2,p32,p8,p14,p26,p20,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p38,p32,p8,p14,p26,p20,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 p3<- p3+ggtitle("Chl > 10 ug/L")
@@ -1901,8 +1953,9 @@ p9<- p9+ggtitle("Chl > 75th quantile")
 p15<-p15+ggtitle("Chl > 75% of median")
 p27<- p27+ggtitle("Chl > 75th annual quantile")
 p21<- p21+ggtitle("Chl > 75% of annual median")
+p39 <- p39+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_Confluence.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p3,p33,p9,p15,p27,p21,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p39,p33,p9,p15,p27,p21,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 p4<- p4+ggtitle("Chl > 10 ug/L")
@@ -1911,8 +1964,9 @@ p10<- p10+ggtitle("Chl > 75th quantile")
 p16<-p16+ggtitle("Chl > 75% of median")
 p28<- p28+ggtitle("Chl > 75th annual quantile")
 p22<- p22+ggtitle("Chl > 75% of annual median")
+p40 <- p40+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_NorthDelta.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p4,p34,p10,p16,p28,p22,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p40,p34,p10,p16,p28,p22,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 p5<- p5+ggtitle("Chl > 10 ug/L")
@@ -1921,8 +1975,9 @@ p11<- p11+ggtitle("Chl > 75th quantile")
 p17<-p17+ggtitle("Chl > 75% of median")
 p29<- p29+ggtitle("Chl > 75th annual quantile")
 p23<- p23+ggtitle("Chl > 75% of annual median")
+p41 <- p41+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_CentralDelta.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p5,p35,p11,p17,p29,p23,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p41,p35,p11,p17,p29,p23,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
 
 p6<- p6+ggtitle("Chl > 10 ug/L")
@@ -1931,7 +1986,128 @@ p12<- p12+ggtitle("Chl > 75th quantile")
 p18<-p18+ggtitle("Chl > 75% of median")
 p30<- p30+ggtitle("Chl > 75th annual quantile")
 p24<- p24+ggtitle("Chl > 75% of annual median")
+p42 <- p42+ggtitle("Chl > 1 stdev of mean")
 tiff("Figures/Bloom detection/MethodComp_SouthDelta.tiff", units="in", width=16, height=9, res=300)
-ggarrange(p6,p36,p12,p18,p30,p24,ncol=2,nrow=3,common.legend=TRUE)
+ggarrange(p42,p36,p12,p18,p30,p24,ncol=2,nrow=3,common.legend=TRUE)
 dev.off()
+
+
+# Delta-wide thresholds ---------------------------------------------------
+
+# >1 standard deviation above the mean
+test <- CM %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+
+test <- CM %>% filter(Regions == "Suisun Marsh") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p43 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Marsh")
+
+test <- CM %>% filter(Regions == "Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p44 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Bay")
+
+test <- CM %>% filter(Regions == "Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p45 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Confluence")
+
+test <- CM %>% filter(Regions == "North Delta") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p46 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("North Delta")
+
+test <- CM %>% filter(Regions == "Central") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p47 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Central Delta")
+
+test <- CM %>% filter(Regions == "South") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p48 <- ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("South Delta")
+
+tiff("Figures/Bloom detection/deltawide_stdev.tiff", units="in", width=16, height=9, res=300)
+ggarrange(p43,p44,p45,p46,p47,p48,ncol=2,nrow=3,common.legend=TRUE)
+dev.off()
+
+
+# 75th quantile
+test <- CM %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = quantile(test$Chl, probs = 0.75,na.rm=TRUE)
+
+test <- CM %>% filter(Regions=="Suisun Marsh") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p7<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Marsh")
+
+test <- CM %>% filter(Regions=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p8<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Bay")
+
+test <- CM %>% filter(Regions=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p9<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Confluence")
+
+test <- CM %>% filter(Regions=="North Delta") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p10<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("North Delta")
+
+test <- CM %>% filter(Regions=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p11<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Central Delta")
+
+test <- CM %>% filter(Regions=="South") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p12<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("South Delta")
+
+tiff("Figures/Bloom detection/deltawide_Quantile_75.tiff", units="in", width=16, height=9, res=300)
+ggarrange(p7,p8,p9,p10,p11,p12,ncol=2,nrow=3,common.legend=TRUE)
+dev.off()
+
+
+# 75th percentile
+test <- CM %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+x = median(test$Chl,na.rm=TRUE)*1.75
+
+test <- CM %>% filter(Regions=="Suisun Marsh") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p7<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Marsh")
+
+test <- CM %>% filter(Regions=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p8<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Suisun Bay")
+
+test <- CM %>% filter(Regions=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p9<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Confluence")
+
+test <- CM %>% filter(Regions=="North Delta") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p10<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("North Delta")
+
+test <- CM %>% filter(Regions=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p11<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("Central Delta")
+
+test <- CM %>% filter(Regions=="South") %>% group_by(Date) %>% summarize(Chl=mean(Chl,na.rm=TRUE))
+test$bloom <- ifelse(test$Chl > x, "Yes", "No")
+p12<-ggplot()+geom_path(data = test,aes(x=Date,y=Chl),color="black")+
+  geom_point(data = test %>% filter(bloom=="Yes"), aes(x = Date, y = Chl),color="blue")+ggtitle("South Delta")
+
+tiff("Figures/Bloom detection/deltawide_percentile_75.tiff", units="in", width=16, height=9, res=300)
+ggarrange(p7,p8,p9,p10,p11,p12,ncol=2,nrow=3,common.legend=TRUE)
+dev.off()
+
 
