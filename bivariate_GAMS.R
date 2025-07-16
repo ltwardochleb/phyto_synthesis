@@ -49,19 +49,24 @@ wq$bloom[wq$Chlorophyll >= 5] <- as.factor(1)
 wq$bloom[wq$Chlorophyll < 5] <- as.factor(0)
 
 #5. set up the gam -----------
-# NH4 + PO4 + (NO2+NO3) + temperature + turbidity + conductivity + Sac inflow + Sac Valley index + clam biomass + Season + lag(Sac inflow) + previous year(Sac Valley index) + lag(NH4) + lag(PO4) + lag (NO2+NO3) + (1|station) + (1|Month) 
+# NH4 + PO4 + (NO2+NO3) + temperature + turbidity + conductivity + Sac inflow + Sac Valley index + clam biomass + Season + lag(Sac inflow) + previous year(Sac Valley index) + lag(NH4) + lag(PO4) + lag (NO2+NO3) + (1|station) + (1|Month)
+
+colnames(wq)
 
 ###### TO DO ######
 #NEED TO PULL IN SAC VALLEY INDEX TO OG DATA INTEGRATION
 #Laura to pull in clam biomass
-#how do I include the character categories?
+
+#questions:
+#1. How do I implement lag?
+#2. How do I implement more than two categories? (season)
+#3. what is the right k value? 
 
 
 
-gam(bloom ~ s(TotAmmonia,TotPhos,DissNitrateNitrite,Temperature,TurbidityNTU,Conductivity,SAC,k=100),
+m <- gam(bloom ~ s(TotAmmonia,TotPhos,DissNitrateNitrite,Temperature,TurbidityNTU,Conductivity,SAC,k=500),
     data = wq,
     family = binomial,
     method = 'REML')
 
-
-help(mgcv)
+summary(m)
