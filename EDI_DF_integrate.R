@@ -27,6 +27,16 @@ df_month <- dayflow %>%
   summarise_if(is.numeric,mean) %>% 
   mutate(year_month = parse_date(paste(Year,Month),"%Y %m"))
 
+#merge with SVI
+
+svi <- read_csv("Data/Dayflow/wy_class_ind.csv")
+dates <- as.data.frame(seq.Date(ymd(19501201),ymd(20221201),by="month")) %>%
+  rename(year_month=names(.)) %>%
+  mutate(WY = as.numeric(format(ymd(year_month) %m+% months(3),"%Y")))
+
+svi <- merge(svi,dates,by="WY",all.y=T) %>% select(c("year_month","Yr-type","Index"))
+df_month <- merge(df_month,svi,by="year_month")
+
 rm(dayflow)
 
 #EDI ----------
