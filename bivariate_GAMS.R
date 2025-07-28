@@ -42,16 +42,16 @@ wq_r_sum <- wq %>%
   group_by(Regions,year_month) %>%
   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
   merge(wq_season,by="Month",all.x=T) %>%
-  select(c("year_month", "Month", "Regions", 
+  select(c("year_month", "Month", "season", "Regions", 
+           "Chlorophyll",
            "TotAmmonia", "DissAmmonia",
            "TotPhos","DissNitrateNitrite",
            "Temperature", 
            "TurbidityNTU","TurbidityFNU",
            "Conductivity",
            "SAC",
-           "season",
-           "Chlorophyll"))
-  
+           "Index"))
+
 
 #Filter dataset to variables we're interested in - predictors and chlorophyll
 #produce figure to see data gaps by region (see data exploration)
@@ -63,6 +63,23 @@ wq_r_sum <- wq %>%
 wq_r_sum$Bloom <- replicate(nrow(wq_r_sum),NA)
 wq_r_sum$Bloom[wq_r_sum$Chlorophyll >= 5] <- 1
 wq_r_sum$Bloom[wq_r_sum$Chlorophyll < 5] <- 0
+
+
+wq_r_sum_n <- wq_r_sum %>%
+  mutate(across(Chlorophyll:Index,~replace(., !is.na(.),1))) %>%
+  mutate(across(Chlorophyll:Index,~replace(., is.na(.), 0))) %>%
+  mutate(year = year(year_month)) %>%
+  group_by(Regions,year) %>%
+  summarize(across(Chlorophyll:Index,sum))
+
+#stuck here at graphing
+temp_sites_plot<-wq_r_sum_n%>%ggplot(aes(x=year,y=Regions))+geom_tile(aes(fill=Chlorophyll))+
+  scale_fill_gradient(low="white",high="red")+
+  ggtitle("temperature sampling by season")+
+  facet_grid(year~.)+
+  theme_classic()+
+  theme(legend.position = "none")
+temp_sites_plot 
 
 #use chlorophyll for now
 
