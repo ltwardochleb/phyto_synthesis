@@ -37,7 +37,7 @@ wq_season <- wq %>% group_by(Month) %>%
   summarize(season=unique(season)) 
 
 #3. Calculate monthly average values for each region --------
-
+colnames(wq)
 wq_r_sum <- wq %>% 
   group_by(Regions,year_month) %>%
   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
@@ -65,27 +65,29 @@ wq_r_sum$Bloom[wq_r_sum$Chlorophyll >= 5] <- 1
 wq_r_sum$Bloom[wq_r_sum$Chlorophyll < 5] <- 0
 
 
+#DATA EXPLORATION --------------------
+
 wq_r_sum_n <- wq_r_sum %>%
   mutate(across(Chlorophyll:Index,~replace(., !is.na(.),1))) %>%
   mutate(across(Chlorophyll:Index,~replace(., is.na(.), 0))) %>%
   mutate(year = year(year_month)) %>%
   group_by(Regions,year) %>%
-  summarize(across(Chlorophyll:Index,sum))
+  summarize(across(Chlorophyll:Index,sum)) %>%
+  pivot_longer(cols = Chlorophyll:Index,values_to="count",
+               names_to="parameter")
 
-#stuck here at graphing
-temp_sites_plot<-wq_r_sum_n%>%ggplot(aes(x=year,y=Regions))+geom_tile(aes(fill=Chlorophyll))+
+
+region_parameter_plot<-wq_r_sum_n%>%ggplot(aes(x=year,y=Regions))+geom_tile(aes(fill=count))+
   scale_fill_gradient(low="white",high="red")+
-  ggtitle("temperature sampling by season")+
-  facet_grid(year~.)+
+  ggtitle("sampling by parameter, year, region")+
+  facet_grid(parameter~.)+
   theme_classic()+
   theme(legend.position = "none")
-temp_sites_plot 
+region_parameter_plot 
 
-#use chlorophyll for now
-
-#Data exploration - WQ sum
-
-
+#takeaways - big gap in chlorophyll for Suisun Marsh
+# No totammonia - maybe find different parameter?
+# SAC should not be missing anywhere, what happened to my dayflow data? 
 
 #5. set up the gam -----------
 # NH4 + PO4 + (NO2+NO3) + temperature + turbidity + conductivity + Sac inflow + Sac Valley index + clam biomass + Season + lag(Sac inflow) + previous year(Sac Valley index) + lag(NH4) + lag(PO4) + lag (NO2+NO3) + (1|station) + (1|Month)
@@ -104,8 +106,8 @@ colnames(wq_r_sum)
 
 #regional summary by month is the input
 
-m <- gam(Bloom ~ Temperature+SAC,
-    data = wq_r_sum,
+m <- gam(Bloom ~ Temperature+log(SAC)+log(Conductivity)+log(DissAmmonia)+TurbidityNTU,
+    data = wq_r_sum[(wq_r_sum$Regions %in% "South"),],
     family = binomial,
     method = 'ML') #look into the methods - MLE
 
@@ -115,12 +117,8 @@ m <- gam(Bloom ~ Temperature+SAC,
 #want some of the interaction terms
 #don't need to specify k - can do check after
 
-help(te)
-help(s) #s basically fits a polynomial relationship
-
 k.check(m)
 
-help(gam)
 summary(m)
 
 
