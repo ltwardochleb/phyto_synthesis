@@ -1,0 +1,662 @@
+---
+title: "Seasonal Analysis"
+author: "Shaela Noble"
+date: "2025-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+Read in packages
+```{r Read in Packages, include=FALSE}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(splines)
+library(tidyverse)
+library(caret)
+library(ggrepel)
+library(here)
+library(FSA)
+library(nlstools)
+library(corrplot)
+library(sf)
+library(forcats)
+theme_set(theme_classic())
+```
+
+Read in Region Shapefile
+```{r Read in Region Shapefile, include=FALSE}
+#read in region data
+Rosies_regions <- st_read("clams_example/Rosies_regions_edited/Rosies_regions_edited.shp")
+
+#change the crs to UTM zone 10N (EPSG 32610)
+Rosies_regions<- st_transform(Rosies_regions, crs =32610)
+```
+
+Read in Alex's csv
+```{r Read in Alexs csv, include=FALSE}
+#read in region data
+wq_flow <- read.csv("Data/edi_df_integrate_monthly.csv")
+```
+
+Create seasonal variable
+```{r Create seasonal variable, include=FALSE}
+#convert dates to months and seasons
+wq_season<-wq_flow %>% mutate(
+       Year=if_else(Month==12, Year+1, Year), # Move Decembers to the following year
+       Season=case_when(Month%in%3:5 ~ "Spring", # Create seasonal variables
+                        Month%in%6:8 ~ "Summer",
+                        Month%in%9:11 ~ "Fall",
+                        Month%in%c(12, 1, 2) ~ "Winter",
+                        TRUE ~ NA_character_))
+```
+
+Attach Regions and Clean up Data
+```{r Attach Regions and Clean up Data, include=FALSE}
+#filter data frame to contain variables of interest 
+wq_data<-wq_season %>% select(year_month, Season, Source, Station, Latitude, Longitude, Depth, Temperature, Conductivity, Conductivity_bottom, Secchi, Chlorophyll, DissAmmonia, DissNitrateNitrite, DissOrthophos, SAC, SJR, OUT, EXPORT)
+
+#filter out NA coord
+wq_data <- filter(wq_data, is.na(Latitude) == FALSE)
+
+#convert file to simple features so we can map stations to subregions
+wq_data_sf = wq_data %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  #convert to UTMs so it's in the same coordinate reference system as Rosie's regions shapefile
+  st_transform(crs = 32610)
+
+#Join regions to WQ data
+wq_data_regions <- st_join(wq_data_sf, Rosies_regions["Regions"], join = st_intersects, left= TRUE) %>%  
+  filter(!is.na(Regions)) %>%
+  st_drop_geometry() 
+
+#restructure data for facet wrap
+wq_data_facet <- wq_data_regions %>% select(Source, Station, year_month, Regions, Season, Temperature, Conductivity, Secchi, Chlorophyll, DissAmmonia, DissNitrateNitrite, DissOrthophos, SAC, SJR, OUT, EXPORT) %>% mutate(log_Conductivity = log(Conductivity), log_Secchi = log(Secchi), log_DissAmmonia = log(DissAmmonia), log_DissNitrateNitrite = log(DissNitrateNitrite), log_DissOrthophos = log(DissOrthophos), log_SAC = log(SAC), log_SJR = log(SJR), log_OUT = log(OUT), log_EXPORT = log(EXPORT)) %>% pivot_longer(cols=c(-Source, -Station, -year_month, -Chlorophyll, -Season, - Regions), names_to="Covariate_name", values_to="Covariate_value")
+
+wq_data_facet2 <- wq_data_regions %>% select(Source, Station, year_month, Regions, Season, Temperature, Conductivity, Secchi, Chlorophyll, DissAmmonia, DissNitrateNitrite, DissOrthophos, SAC, SJR, OUT, EXPORT) %>%  pivot_longer(cols=c(-Source, -Station, -year_month, -Chlorophyll, -Season, - Regions), names_to="Covariate_name", values_to="Covariate_value")
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
+plot <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Delta wide")
+plot
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (no log transform)}
+plot2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Delta wide")
+plot2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season}
+plot_winter <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Winter")
+plot_winter
+
+plot_spring <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Spring")
+plot_spring
+
+plot_summer <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Summer")
+plot_summer
+
+plot_fall <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Fall")
+plot_fall
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season (no log transform)}
+plot_winter2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Winter")
+plot_winter2
+
+plot_spring2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Spring")
+plot_spring2
+
+plot_summer2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Summer")
+plot_summer2
+
+plot_fall2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Fall")
+plot_fall2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Marsh
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Marsh}
+plot_winter_sm <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Winter")
+plot_winter_sm
+
+plot_spring_sm <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Spring")
+plot_spring_sm
+
+plot_summer_sm <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT",  "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Summer")
+plot_summer_sm
+
+plot_fall_sm <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Fall")
+plot_fall_sm
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Marsh (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Marsh (no log transform)}
+plot_winter_sm2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Winter")
+plot_winter_sm2
+
+plot_spring_sm2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Spring")
+plot_spring_sm2
+
+plot_summer_sm2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Summer")
+plot_summer_sm2
+
+plot_fall_sm2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Suisun Marsh") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Marsh - Fall")
+plot_fall_sm2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay}
+plot_winter_sb <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Winter")
+plot_winter_sb
+
+plot_spring_sb <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Spring")
+plot_spring_sb
+
+plot_summer_sb <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Summer")
+plot_summer_sb
+
+plot_fall_sb <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Fall")
+plot_fall_sb
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay (no log transform)}
+plot_winter_sb2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Winter")
+plot_winter_sb2
+
+plot_spring_sb2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Spring")
+plot_spring_sb2
+
+plot_summer_sb2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Summer")
+plot_summer_sb2
+
+plot_fall_sb2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Suisun Bay") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Suisun Bay - Fall")
+plot_fall_sb2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta}
+plot_winter_nd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT","EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Winter")
+plot_winter_nd
+
+plot_spring_nd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Spring")
+plot_spring_nd
+
+plot_summer_nd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Summer")
+plot_summer_nd
+
+plot_fall_nd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Fall")
+plot_fall_nd
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta (no log transform)}
+plot_winter_nd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Winter")
+plot_winter_nd2
+
+plot_spring_nd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Spring")
+plot_spring_nd2
+
+plot_summer_nd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Summer")
+plot_summer_nd2
+
+plot_fall_nd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "North Delta") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("North Delta - Fall")
+plot_fall_nd2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence}
+plot_winter_cf <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Winter")
+plot_winter_cf
+
+plot_spring_cf <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Spring")
+plot_spring_cf
+
+plot_summer_cf <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Summer")
+plot_summer_cf
+
+plot_fall_cf <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Fall")
+plot_fall_cf
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence (no log transform)}
+plot_winter_cf2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Winter")
+plot_winter_cf2
+
+plot_spring_cf2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Spring")
+plot_spring_cf2
+
+plot_summer_cf2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Summer")
+plot_summer_cf2
+
+plot_fall_cf2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Confluence") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Confluence - Fall")
+plot_fall_cf2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central}
+plot_winter_cn <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Winter")
+plot_winter_cn
+
+plot_spring_cn <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Spring")
+plot_spring_cn
+
+plot_summer_cn <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Summer")
+plot_summer_cn
+
+plot_fall_cn <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Fall")
+plot_fall_cn
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central (no log transform)}
+plot_winter_cn2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Winter")
+plot_winter_cn2
+
+plot_spring_cn2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Spring")
+plot_spring_cn2
+
+plot_summer_cn2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Summer")
+plot_summer_cn2
+
+plot_fall_cn2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "Central") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Central - Fall")
+plot_fall_cn2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South}
+plot_winter_sd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Winter")
+plot_winter_sd
+
+plot_spring_sd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Spring")
+plot_spring_sd
+
+plot_summer_sd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Summer")
+plot_summer_sd
+
+plot_fall_sd <- wq_data_facet %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Fall")
+plot_fall_sd
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South (no log transform)}
+plot_winter_sd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Winter") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Winter")
+plot_winter_sd2
+
+plot_spring_sd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Spring") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Spring")
+plot_spring_sd2
+
+plot_summer_sd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Summer") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Summer")
+plot_summer_sd2
+
+plot_fall_sd2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll)) %>% filter(Season == "Fall") %>% filter(Regions == "South") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("South - Fall")
+plot_fall_sd2
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables for Different Time Periods (Pre-Overbite Clam, Pre-POD, and Post-POD)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables for Different Time Periods (Pre-Overbite Clam, Pre-POD, and Post-POD)}
+plot_preclam <- wq_data_facet %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "1979-01-01" & Date < "1987-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Pre-Overbite Clam (1979-1986)")
+plot_preclam
+
+plot_prePOD <- wq_data_facet %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "1987-01-01" & Date < "2002-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Pre-POD (1987-2002)")
+plot_prePOD
+
+plot_postPOD <- wq_data_facet %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "2002-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Conductivity", "log_Conductivity", "Secchi", "log_Secchi", "DissAmmonia", "log_DissAmmonia", "DissNitrateNitrite", "log_DissNitrateNitrite", "DissOrthophos", "log_DissOrthophos", "SAC", "log_SAC", "SJR", "log_SJR", "OUT", "log_OUT", "EXPORT", "log_EXPORT", "Temperature")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Post-POD (2002-present)")
+plot_postPOD
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables for Different Time Periods (Pre-Overbite Clam, Pre-POD, and Post-POD) (no log transform)
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables for Different Time Periods (Pre-Overbite Clam, Pre-POD, and Post-POD) (no log transform)}
+plot_preclam2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "1979-01-01" & Date < "1987-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Pre-Overbite Clam (1979-1986)")
+plot_preclam2
+
+plot_prePOD2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "1987-01-01" & Date < "2002-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Pre-POD (1987-2002)")
+plot_prePOD2
+
+plot_postPOD2 <- wq_data_facet2 %>% filter(!is.na(Chlorophyll))%>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% filter(Date >= "2002-01-01") %>% mutate(Covariate_name = forcats::fct_relevel(Covariate_name, "Temperature", "Conductivity", "Secchi",  "DissAmmonia", "DissNitrateNitrite", "DissOrthophos", "SAC", "SJR", "OUT", "EXPORT")) %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Post-POD (2002-present)")
+plot_postPOD2
+```
+
+Discrete Chl-a Plots
+```{r Discrete Chl-a Plots}
+chl_a <- wq_data_regions %>% filter(!is.na(Chlorophyll)) %>% 
+  ggplot(aes(x=year_month, y=Chlorophyll)) +
+  geom_line()
+chl_a
+
+chl_a_season <- wq_data_regions %>% filter(!is.na(Chlorophyll)) %>% mutate(Date = as.Date(year_month, "%Y-%m-%d")) %>% 
+  ggplot(aes(x=Date, y=sqrt(Chlorophyll), color=Regions)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~Season, ncol = 1, scales = "free") +
+  scale_x_date(breaks = date_breaks("10 years"),
+  labels = date_format("%Y"))
+chl_a_season
+```
