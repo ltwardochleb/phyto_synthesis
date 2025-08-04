@@ -30,7 +30,7 @@ theme_set(theme_classic())
 Read in Region Shapefile
 ```{r Read in Region Shapefile, include=FALSE}
 #read in region data
-Rosies_regions <- st_read("clams_example/Rosies_regions_edited/Rosies_regions_edited.shp")
+Rosies_regions <- st_read("Regions_shp/Rosies_regions_edited.shp")
 
 #change the crs to UTM zone 10N (EPSG 32610)
 Rosies_regions<- st_transform(Rosies_regions, crs =32610)
