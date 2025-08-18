@@ -42,6 +42,7 @@ wq_r_sum <- wq %>%
   group_by(Regions,year_month) %>%
   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
   merge(wq_season,by="Month",all.x=T) %>%
+  mutate(year_month = ymd(year_month)) %>%
   select(c("year_month", "Month", "season", "Regions", 
            "Chlorophyll",
            "TotAmmonia", "DissAmmonia",
@@ -64,8 +65,23 @@ wq_r_sum$Bloom <- replicate(nrow(wq_r_sum),NA)
 wq_r_sum$Bloom[wq_r_sum$Chlorophyll >= 5] <- 1
 wq_r_sum$Bloom[wq_r_sum$Chlorophyll < 5] <- 0
 
+wq_r_sum_lagmonth <- wq_r_sum %>%
+  mutate(lagmonth = year_month %m+% months(1)) %>%
+  select(lagmonth,Regions,TotAmmonia:SAC) %>%
+  rename_with(~ paste0("lag",.x)) %>%
+  rename(lagmonth = "laglagmonth",Regions = "lagRegions")
 
-#DATA EXPLORATION --------------------
+wq_r_sum_lagyear <- wq_r_sum %>%
+  mutate(lagyear = year_month %m+% months(1)) %>%
+  select(lagyear,Regions,Index) %>%
+  rename(lagyearIndex = "Index")
+
+wq_r_sum <- wq_r_sum %>%
+  merge(wq_r_sum_lagmonth,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
+  merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
+help(merge)
+
+#5. Data availability --------------------
 
 wq_r_sum_n <- wq_r_sum %>%
   mutate(across(Chlorophyll:Index,~replace(., !is.na(.),1))) %>%
@@ -89,7 +105,37 @@ region_parameter_plot
 # No totammonia - maybe find different parameter?
 # SAC should not be missing anywhere, what happened to my dayflow data? 
 
-#5. set up the gam -----------
+
+
+#6. Exploration plots ----------
+wq_long <- wq_r_sum %>%
+  pivot_longer(cols=TotAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value")
+
+#### Whole Delta ####
+plot_delta <- wq_long %>% 
+  filter(!is.na(Chlorophyll)) %>% 
+  ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Whole Delta")
+plot_delta
+
+wq_long_log <- wq_long %>%
+  mutate(logvalue = log(Covariate_value)) %>%
+  filter(!is.infinite(logvalue))
+
+plot_delta_log <- wq_long_log %>% 
+  filter(!is.na(Chlorophyll)) %>%
+  ggplot(aes(x=logvalue, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, scales = "free")+
+  theme_bw() +
+  ggtitle("Whole Delta Log")
+plot_delta_log
+
+
+#7. set up the gam -----------
 # NH4 + PO4 + (NO2+NO3) + temperature + turbidity + conductivity + Sac inflow + Sac Valley index + clam biomass + Season + lag(Sac inflow) + previous year(Sac Valley index) + lag(NH4) + lag(PO4) + lag (NO2+NO3) + (1|station) + (1|Month)
 
 colnames(wq_r_sum)
@@ -98,18 +144,25 @@ colnames(wq_r_sum)
 #NEED TO PULL IN SAC VALLEY INDEX TO OG DATA INTEGRATION
 #Laura to pull in clam biomass
 
-#questions:
-#1. How do I implement lag?
-#2. How do I implement more than two categories? (season)
-#3. what is the right k value? 
-
-
 #regional summary by month is the input
 
-m <- gam(Bloom ~ Temperature+log(SAC)+log(Conductivity)+log(DissAmmonia)+TurbidityNTU,
-    data = wq_r_sum[(wq_r_sum$Regions %in% "South"),],
-    family = binomial,
-    method = 'ML') #look into the methods - MLE
+m <- gam(Bloom ~ log(DissAmmonia) +
+           log(TotPhos) +
+           log(DissNitrateNitrite) +
+           log(Temperature) +
+           TurbidityNTU +
+           Conductivity +
+           SAC +
+           Index +
+           season +
+           lagSAC +
+           lagyearIndex +
+           lagDissAmmonia +
+           (lagTotPhos) +
+           log(lagDissNitrateNitrite),
+         data = wq_r_sum[wq_r_sum$Regions %in% "Central",],
+         family = binomial,
+         method = 'REML') #look into the methods - ML,REML
 
 #want some of the predictors to be linear - look at Shaela's figures
 ## No linear equivalent for s, just naked in the function
@@ -117,9 +170,4 @@ m <- gam(Bloom ~ Temperature+log(SAC)+log(Conductivity)+log(DissAmmonia)+Turbidi
 #want some of the interaction terms
 #don't need to specify k - can do check after
 
-k.check(m)
-
 summary(m)
-
-
-
