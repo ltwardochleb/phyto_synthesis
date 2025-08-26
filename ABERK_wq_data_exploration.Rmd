@@ -42,10 +42,10 @@ Create seasonal variable
 ```{r Create seasonal variable, include=FALSE}
 #convert dates to months and seasons
 wq$season <- replicate(nrow(wq),NA)
-wq$season[wq$Month %in% c(12,1,2)] <- "Winter"
-wq$season[wq$Month %in% c(3,4,5)] <- "Spring"
-wq$season[wq$Month %in% c(6,7,8)] <- "Summer"
-wq$season[wq$Month %in% c(9,10,11)] <- "Fall"
+wq$season[wq$Month %in% c(1,2,3)] <- "Winter"
+wq$season[wq$Month %in% c(4,5,6)] <- "Spring"
+wq$season[wq$Month %in% c(7,8,9)] <- "Summer"
+wq$season[wq$Month %in% c(10,11,12)] <- "Fall"
 
 wq_season <- wq %>% group_by(Month) %>%
   summarize(season=unique(season)) 
@@ -72,43 +72,111 @@ wq_r_sum <- wq %>%
   mutate(year_month = ymd(year_month)) %>%
   select(c("year_month", "Month", "season", "Regions", 
            "Chlorophyll",
-           "TotAmmonia", "DissAmmonia",
-           "TotPhos","DissNitrateNitrite",
+           "DissAmmonia",
+           "Secchi",
+           "TotPhos",
+           "DissNitrateNitrite",
            "Temperature", 
-           "TurbidityNTU","TurbidityFNU",
+           "TurbidityNTU",
            "Conductivity",
            "SAC",
            "Index"))
 
 
-#add lag
-wq_r_sum_lagmonth <- wq_r_sum %>%
+#add 1-month lag
+wq_r_sum_lagmonth1 <- wq_r_sum %>%
   mutate(lagmonth = year_month %m+% months(1)) %>%
-  select(lagmonth,Regions,TotAmmonia:SAC) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC) %>%
   rename_with(~ paste0("lag",.x)) %>%
   rename(lagmonth = "laglagmonth",Regions = "lagRegions")
 
+#add 2-month lag
+wq_r_sum_lagmonth2 <- wq_r_sum %>%
+  mutate(lagmonth = year_month %m+% months(2)) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC) %>%
+  rename_with(~ paste0("lag",.x)) %>%
+  rename(lagmonth = "laglagmonth",Regions = "lagRegions")
+
+#add 3-month lag
+wq_r_sum_lagmonth3 <- wq_r_sum %>%
+  mutate(lagmonth = year_month %m+% months(3)) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC) %>%
+  rename_with(~ paste0("lag",.x)) %>%
+  rename(lagmonth = "laglagmonth",Regions = "lagRegions")
+
+wq_r_sum_lagseason <- wq_r_sum %>%
+  mutate(year = year(year_month)) %>%
+  group_by(Regions,year,season) %>%
+  summarize(across(DissAmmonia:SAC,\(x) mean(x, na.rm = TRUE))) %>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(year = "lagyear",season = "lagseason",Regions="lagRegions") %>%
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Fall",
+    season == "Fall" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Fall" ~ year+1,
+    !(season == "Fall") ~ year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>%
+  select(c("lagseasonyear","Regions","lagDissAmmonia","lagSecchi","lagTotPhos",
+           "lagDissNitrateNitrite","lagTemperature","lagTurbidityNTU","lagConductivity",
+           "lagSAC"))
+
+
 wq_r_sum_lagyear <- wq_r_sum %>%
-  mutate(lagyear = year_month %m+% months(1)) %>%
+  mutate(lagyear = year_month %m+% months(12)) %>%
   select(lagyear,Regions,Index) %>%
   rename(lagyearIndex = "Index")
 
-wq_r_sum <- wq_r_sum %>%
+wq_r_sum1 <- wq_r_sum %>%
   merge(wq_r_sum_lagmonth,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
   merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
-help(merge)
+
+wq_r_sum2 <- wq_r_sum %>%
+  merge(wq_r_sum_lagmonth2,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
+  merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
+
+wq_r_sum3 <- wq_r_sum %>%
+  merge(wq_r_sum_lagmonth3,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
+  merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
+
+wq_r_sum_season <- wq_r_sum %>% 
+  mutate(seasonyear = paste0(season,year(year_month)))%>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
+
+
 
 
 #restructure data for facet wrap
-wq_long <- wq_r_sum %>%
-  pivot_longer(cols=TotAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
+wq_long1 <- wq_r_sum1 %>%
+  pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
+  mutate(logvalue = log(Covariate_value)) %>%
+  filter(!is.infinite(logvalue))
+
+wq_long2 <- wq_r_sum2 %>%
+  pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
+  mutate(logvalue = log(Covariate_value)) %>%
+  filter(!is.infinite(logvalue))
+
+wq_long3 <- wq_r_sum3 %>%
+  pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
+  mutate(logvalue = log(Covariate_value)) %>%
+  filter(!is.infinite(logvalue))
+
+wq_longsn <- wq_r_sum_season %>%
+  pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
   mutate(logvalue = log(Covariate_value)) %>%
   filter(!is.infinite(logvalue))
 ```
 
-Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 1 month lag
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
-plot <- wq_long %>% 
+plot <- wq_long1 %>% 
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
@@ -117,9 +185,9 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
 plot
 ```
 
-Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (log transform)
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 1 month lag (log transform) 
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (log transform)}
-plot <- wq_long %>% 
+plot <- wq_long1 %>% 
 ggplot(aes(x=logvalue, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
@@ -127,6 +195,79 @@ ggplot(aes(x=logvalue, y=(Chlorophyll)))+
   ggtitle("Delta wide - log")
 plot
 ```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 2-month lag
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
+plot <- wq_long2 %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Delta wide - 2 month lag")
+plot
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 2-month lag (log transform) 
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (log transform)}
+plot <- wq_long2 %>% 
+ggplot(aes(x=logvalue, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("log Delta wide - 2 month lag")
+plot
+```
+
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 3-month lag
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
+plot <- wq_long3 %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Delta wide - 3-month lag")
+plot
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 3-month lag (log transform) 
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (log transform)}
+plot <- wq_long3 %>% 
+ggplot(aes(x=logvalue, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("log Delta wide - 3-month lag")
+plot
+```
+
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with seasonal lag
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
+plot <- wq_longsn %>% 
+ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Delta wide - seasonal lag")
+plot
+```
+
+Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with seasonal lag (log transform) 
+```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables (log transform)}
+plot <- wq_longsn %>% 
+ggplot(aes(x=logvalue, y=(Chlorophyll)))+
+  geom_point()+
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("log Delta wide - seasonal lag")
+plot
+```
+
+
+
+
+
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season}
