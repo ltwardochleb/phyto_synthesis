@@ -133,7 +133,7 @@ wq_r_sum_lagyear <- wq_r_sum %>%
   rename(lagyearIndex = "Index")
 
 wq_r_sum1 <- wq_r_sum %>%
-  merge(wq_r_sum_lagmonth,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
+  merge(wq_r_sum_lagmonth1,by.x=c("year_month","Regions"),by.y=c("lagmonth","Regions"),all.x=T) %>%
   merge(wq_r_sum_lagyear,by.x=c("year_month","Regions"),by.y=c("lagyear","Regions"),all.x=T)
 
 wq_r_sum2 <- wq_r_sum %>%
@@ -181,7 +181,7 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
   theme_bw()+
-  ggtitle("Delta wide")
+  ggtitle("Delta wide - 1-month lag")
 plot
 ```
 
@@ -192,7 +192,7 @@ ggplot(aes(x=logvalue, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
   theme_bw()+
-  ggtitle("Delta wide - log")
+  ggtitle("Log Delta wide - 1 month lag")
 plot
 ```
 
