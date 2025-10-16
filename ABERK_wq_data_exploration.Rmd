@@ -18,102 +18,97 @@ library(mgcv)
 library(MuMIn)
 library(gratia)
 library(sf)
-
+library(plotly)
 theme_set(theme_classic())
 ```
 
 Read in Region Shapefile
 ```{r Read in Region Shapefile, include=FALSE}
-#read in region data
-regions <- st_read("Regions_shp/Rosies_regions_edited.shp")
-
-#change the crs to UTM zone 10N (EPSG 32610)
-regions<- st_transform(regions, crs =32610)
+# #read in region data
+# regions <- st_read("Regions_shp/Rosies_regions_edited.shp")
+# 
+# #change the crs to UTM zone 10N (EPSG 32610)
+# regions<- st_transform(regions, crs =32610)
 ```
 
-Read in Alex's csv
+Read in Water quality data
 ```{r Read in Alexs csv, include=FALSE}
-#read in region data
-wq <- read.csv("Data/edi_df_integrate_monthly.csv") %>%
-  filter(ymd(year_month) >= ymd(19790101))
+# #read in Alex CSV
+# wq <- read.csv("Data/edi_df_integrate_monthly.csv") %>%
+#   filter(ymd(year_month) >= ymd(19790101))
+# 
+# #Ryan clams file 
+# cl <- read.csv("data/combined_clams_dataset.csv")
+
+#Read in Ryan CSV
+wq_r_sum <- read_csv("Data/regional_integrated_dataset.csv") %>%
+  select(Regions,year_month,Month,season,Chlorophyll:OUT,Corbicula_biomass:Potamocorbula_FR) %>%
+  select(-TotAmmonia) %>%
+  filter(year_month > ymd("1978-9-1")) %>% #study approach - WY 1979-present 
+  filter(!(Regions %in% "Suisun Marsh")) #suisun marsh doesn't have enough data so removing
 ```
 
 Create seasonal variable
 ```{r Create seasonal variable, include=FALSE}
-#convert dates to months and seasons
-wq$season <- replicate(nrow(wq),NA)
-wq$season[wq$Month %in% c(1,2,3)] <- "Winter"
-wq$season[wq$Month %in% c(4,5,6)] <- "Spring"
-wq$season[wq$Month %in% c(7,8,9)] <- "Summer"
-wq$season[wq$Month %in% c(10,11,12)] <- "Fall"
-
-wq_season <- wq %>% group_by(Month) %>%
-  summarize(season=unique(season)) 
+# #convert dates to months and seasons
+# wq$season <- replicate(nrow(wq),NA)
+# wq$season[wq$Month %in% c(1,2,3)] <- "Winter"
+# wq$season[wq$Month %in% c(4,5,6)] <- "Spring"
+# wq$season[wq$Month %in% c(7,8,9)] <- "Summer"
+# wq$season[wq$Month %in% c(10,11,12)] <- "Fall"
+# 
+# wq_season <- wq %>% group_by(Month) %>%
+#   summarize(season=unique(season)) 
 ```
 
-Attach Regions and Clean up Data
+Attach Regions, clam data and Clean up Data
 ```{r Attach Regions and Clean up Data, include=FALSE}
 
-wq.sf <- wq %>%
-  filter(!is.na(Longitude) & !is.na(Latitude)) %>%
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
-  #convert to UTMs so it's in the same coordinate reference system as the Delta shapefile
-  st_transform(crs = 32610)
+# wq.sf <- wq %>%
+#   filter(!is.na(Longitude) & !is.na(Latitude)) %>%
+#   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   #convert to UTMs so it's in the same coordinate reference system as the Delta shapefile
+#   st_transform(crs = 32610)
+# 
+# wq <- st_join(wq.sf, regions["Regions"], join = st_intersects, left= TRUE) %>%  
+#   filter(!is.na(Regions)) %>%
+#   st_drop_geometry() 
 
-wq <- st_join(wq.sf, regions["Regions"], join = st_intersects, left= TRUE) %>%  
-  filter(!is.na(Regions)) %>%
-  st_drop_geometry() 
 
-#Calculate monthly average values for each region
-wq_r_sum <- wq %>% 
-  group_by(Regions,year_month) %>%
-  summarize_if(is.numeric,mean,na.rm=TRUE) %>%
-  merge(wq_season,by="Month",all.x=T) %>%
-  mutate(year_month = ymd(year_month)) %>%
-  select(c("year_month", "Month", "season", "Regions", 
-           "Chlorophyll",
-           "DissAmmonia",
-           "Secchi",
-           "TotPhos",
-           "DissNitrateNitrite",
-           "Temperature", 
-           "TurbidityNTU",
-           "Conductivity",
-           "SAC",
-           "Index"))
 
 
 #add 1-month lag
 wq_r_sum_lagmonth1 <- wq_r_sum %>%
   mutate(lagmonth = year_month %m+% months(1)) %>%
-  select(lagmonth,Regions,DissAmmonia:SAC) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC,OUT) %>%
   rename_with(~ paste0("lag",.x)) %>%
   rename(lagmonth = "laglagmonth",Regions = "lagRegions")
 
 #add 2-month lag
 wq_r_sum_lagmonth2 <- wq_r_sum %>%
   mutate(lagmonth = year_month %m+% months(2)) %>%
-  select(lagmonth,Regions,DissAmmonia:SAC) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC,OUT) %>%
   rename_with(~ paste0("lag",.x)) %>%
   rename(lagmonth = "laglagmonth",Regions = "lagRegions")
 
 #add 3-month lag
 wq_r_sum_lagmonth3 <- wq_r_sum %>%
   mutate(lagmonth = year_month %m+% months(3)) %>%
-  select(lagmonth,Regions,DissAmmonia:SAC) %>%
+  select(lagmonth,Regions,DissAmmonia:SAC,OUT) %>%
   rename_with(~ paste0("lag",.x)) %>%
   rename(lagmonth = "laglagmonth",Regions = "lagRegions")
 
+#seasonal lag - a bit broken?
 wq_r_sum_lagseason <- wq_r_sum %>%
   mutate(year = year(year_month)) %>%
   group_by(Regions,year,season) %>%
-  summarize(across(DissAmmonia:SAC,\(x) mean(x, na.rm = TRUE))) %>%
+  summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE))) %>%
   rename_with(~paste0("lag",.x)) %>%
   rename(year = "lagyear",season = "lagseason",Regions="lagRegions") %>%
   mutate(lagseason = case_when(
     season == "Spring" ~ "Summer",
-    season == "Summer" ~ "Fall",
-    season == "Fall" ~ "Winter",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
     season == "Winter" ~ "Spring" 
   )) %>%
   mutate(lagseasonyear = case_when(
@@ -124,7 +119,7 @@ wq_r_sum_lagseason <- wq_r_sum %>%
   ungroup %>%
   select(c("lagseasonyear","Regions","lagDissAmmonia","lagSecchi","lagTotPhos",
            "lagDissNitrateNitrite","lagTemperature","lagTurbidityNTU","lagConductivity",
-           "lagSAC"))
+           "lagSAC","lagOUT"))
 
 
 wq_r_sum_lagyear <- wq_r_sum %>%
@@ -156,22 +151,73 @@ wq_r_sum_season <- wq_r_sum %>%
 wq_long1 <- wq_r_sum1 %>%
   pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
   mutate(logvalue = log(Covariate_value)) %>%
-  filter(!is.infinite(logvalue))
+  filter(!is.infinite(logvalue)&
+         !is.nan(logvalue))
 
 wq_long2 <- wq_r_sum2 %>%
   pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
   mutate(logvalue = log(Covariate_value)) %>%
-  filter(!is.infinite(logvalue))
+  filter(!is.infinite(logvalue)&
+         !is.nan(logvalue))
 
 wq_long3 <- wq_r_sum3 %>%
   pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
   mutate(logvalue = log(Covariate_value)) %>%
-  filter(!is.infinite(logvalue))
+  filter(!is.infinite(logvalue)&
+         !is.nan(logvalue))
 
 wq_longsn <- wq_r_sum_season %>%
   pivot_longer(cols=DissAmmonia:lagyearIndex,names_to="Covariate_name",values_to="Covariate_value") %>%
   mutate(logvalue = log(Covariate_value)) %>%
-  filter(!is.infinite(logvalue))
+  filter(!is.infinite(logvalue)&
+         !is.nan(logvalue))
+```
+
+
+Create some histograms
+```{r}
+histchl <- wq_longsn %>%
+  ggplot(aes(x=Chlorophyll))+
+  geom_histogram()+
+  ggtitle("Chlorophyll Histogram Full Delta")
+  
+histchl
+
+histchlsd <- wq_longsn %>%
+  filter(Regions %in% "South") %>%
+  ggplot(aes(x=Chlorophyll))+
+  geom_density() + 
+  ggtitle("Chlorophyll Histogram South Delta")
+histchlsd
+
+histcovs <- wq_longsn %>%
+  ggplot(aes(x=Covariate_value)) +
+  geom_density() + 
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Parameter Density Full Delta")
+histcovs
+  
+
+histcovsdsum <- wq_longsn %>%
+  filter(Regions %in% "South",
+         season %in% "Summer") %>%
+  ggplot(aes(x=Covariate_value)) +
+  geom_density() + 
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Parameter Density South Delta Summer")
+histcovsdsum
+
+histcovt <- wq_longsn %>%
+  filter(Covariate_name %in% c("Temperature","lagTemperature")) %>%
+  ggplot(aes(x=Covariate_value)) +
+  geom_histogram(binwidth = 2) + 
+  facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
+  theme_bw()+
+  ggtitle("Temp Histograms")
+histcovt
+  
 ```
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with 1 month lag
@@ -245,12 +291,15 @@ plot
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with seasonal lag
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables}
 plot <- wq_longsn %>% 
-ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+ggplot(aes(x=Covariate_value, y=(Chlorophyll),color=Regions))+
   geom_point()+
   facet_wrap(~Covariate_name, ncol = 4, scales = "free")+
   theme_bw()+
   ggtitle("Delta wide - seasonal lag")
 plot
+# p1 <- ggplotly(plot)
+# htmlwidgets::saveWidget(as_widget(p1), "figures/delta_wide.html")
+
 ```
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables with seasonal lag (log transform) 
@@ -271,38 +320,45 @@ plot
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season}
-plot_winter <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
-ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+
+# plot_spring1 <- wq_long1 %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+# ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+#   geom_point()+
+#   facet_wrap(~Covariate_name, scales = "free")+
+#   theme_bw() +
+#   ggtitle("Delta Wide - Spring - 1 month lag")
+# plot_spring1
+# 
+# plot_summer1 <- wq_long1 %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+# ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+#   geom_point()+
+#   facet_wrap(~Covariate_name, scales = "free")+
+#   theme_bw() +
+#   ggtitle("Delta Wide - Summer - 1 month lag")
+# plot_summer1
+
+plot_springsn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll),color=Regions))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Winter")
-plot_winter
+  ggtitle("Delta Wide - Spring - seasonal lag")
+plot_springsn
 
-plot_spring <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
-ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
+# p2 <- ggplotly(plot_springsn)
+# htmlwidgets::saveWidget(as_widget(p2), "figures/seasonal_spring.html")
+
+plot_summersn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+ggplot(aes(x=Covariate_value, y=(Chlorophyll),color=Regions))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Spring")
-plot_spring
+  ggtitle("Delta Wide - Summer - seasonal lag")
+plot_summersn
 
-plot_summer <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
-ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
-  geom_point()+
-  facet_wrap(~Covariate_name, scales = "free")+
-  theme_bw() +
-  ggtitle("Summer")
-plot_summer
+# p3 <- ggplotly(plot_summersn)
+# htmlwidgets::saveWidget(as_widget(p3), "figures/seasonal_summer.html")
 
-
-plot_fall <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
-ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
-  geom_point()+
-  facet_wrap(~Covariate_name, scales = "free")+
-  theme_bw() +
-  ggtitle("Fall")
-plot_fall
 ```
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season (log transform)
@@ -441,16 +497,16 @@ plot_fall_sm2
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Suisun Bay}
-plot_sb <- wq_long %>% filter(!is.na(Chlorophyll)) %>%
+plot_sb <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>%
   filter(Regions == "Suisun Bay") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Suisun Bay")
+  ggtitle("Suisun Bay - Seasonal lag")
 plot_sb
 
-plot_winter_sb <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
+plot_winter_sb <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
   filter(Regions == "Suisun Bay") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -459,26 +515,26 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   ggtitle("Suisun Bay - Winter")
 plot_winter_sb
 
-plot_spring_sb <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+plot_spring_sb <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
   filter(Regions == "Suisun Bay") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Suisun Bay - Spring")
+  ggtitle("Suisun Bay - Spring - Seasonal lag")
 plot_spring_sb
 
-plot_summer_sb <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+plot_summer_sb <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
   filter(Regions == "Suisun Bay") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Suisun Bay - Summer")
+  ggtitle("Suisun Bay - Summer - Seasonal lag")
 plot_summer_sb
 
 
-plot_fall_sb <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
+plot_fall_sb <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
   filter(Regions == "Suisun Bay") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -541,16 +597,16 @@ plot_fall_sb2
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: North Delta (log transform)}
 
-plot_nd <- wq_long %>% filter(!is.na(Chlorophyll)) %>%
+plot_nd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>%
   filter(Regions == "North Delta") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("North Delta")
+  ggtitle("North Delta - Seasonal lag")
 plot_nd
 
-plot_winter_nd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
+plot_winter_nd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
   filter(Regions == "North Delta") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -559,26 +615,26 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   ggtitle("North Delta - Winter")
 plot_winter_nd
 
-plot_spring_nd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+plot_spring_nd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
   filter(Regions == "North Delta") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("North Delta - Spring")
+  ggtitle("North Delta - Spring - Seasonal lag")
 plot_spring_nd
 
-plot_summer_nd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+plot_summer_nd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
   filter(Regions == "North Delta") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("North Delta - Summer")
+  ggtitle("North Delta - Summer - Seasonal lag")
 plot_summer_nd
 
 
-plot_fall_nd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
+plot_fall_nd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
   filter(Regions == "North Delta") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -639,16 +695,16 @@ plot_fall_nd2
 ```
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Confluence}
-plot_cf <- wq_long %>% filter(!is.na(Chlorophyll)) %>%
+plot_cf <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>%
   filter(Regions == "Confluence") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Confluence")
+  ggtitle("Confluence - Seasonal lag")
 plot_cf
 
-plot_winter_cf <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
+plot_winter_cf <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
   filter(Regions == "Confluence") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -657,26 +713,26 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   ggtitle("Confluence - Winter")
 plot_winter_cf
 
-plot_spring_cf <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+plot_spring_cf <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
   filter(Regions == "Confluence") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Confluence - Spring")
+  ggtitle("Confluence - Spring - Seasonal lag")
 plot_spring_cf
 
-plot_summer_cf <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+plot_summer_cf <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
   filter(Regions == "Confluence") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Confluence - Summer")
+  ggtitle("Confluence - Summer - Seasonal lag")
 plot_summer_cf
 
 
-plot_fall_cf <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
+plot_fall_cf <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
   filter(Regions == "Confluence") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -737,16 +793,16 @@ plot_fall_cf2
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: Central}
-plot_cn <- wq_long %>% filter(!is.na(Chlorophyll)) %>%
+plot_cn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>%
   filter(Regions == "Central") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Central")
+  ggtitle("Central - Seasonal lag")
 plot_cn
 
-plot_winter_cn <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
+plot_winter_cn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
   filter(Regions == "Central") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -755,26 +811,26 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   ggtitle("Central - Winter")
 plot_winter_cn
 
-plot_spring_cn <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+plot_spring_cn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
   filter(Regions == "Central") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Central - Spring")
+  ggtitle("Central - Spring - Seasonal lag")
 plot_spring_cn
 
-plot_summer_cn <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+plot_summer_cn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
   filter(Regions == "Central") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("Central - Summer")
+  ggtitle("Central - Summer - Seasonal lag")
 plot_summer_cn
 
 
-plot_fall_cn <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
+plot_fall_cn <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
   filter(Regions == "Central") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -835,16 +891,16 @@ plot_fall_cn2
 
 Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South
 ```{r Explore Relationships Among Discrete Chlorophyll A and Other Predictor Variables by Season and Across Regions: South}
-plot_sd <- wq_long %>% filter(!is.na(Chlorophyll)) %>%
+plot_sd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>%
   filter(Regions == "South") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("South")
+  ggtitle("South - Seasonal lag")
 plot_sd
 
-plot_winter_sd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
+plot_winter_sd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Winter") %>%
   filter(Regions == "South") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
@@ -853,26 +909,26 @@ ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   ggtitle("South - Winter")
 plot_winter_sd
 
-plot_spring_sd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
+plot_spring_sd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Spring") %>%
   filter(Regions == "South") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("South - Spring")
+  ggtitle("South - Spring - Seasonal lag")
 plot_spring_sd
 
-plot_summer_sd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
+plot_summer_sd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Summer") %>%
   filter(Regions == "South") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
   facet_wrap(~Covariate_name, scales = "free")+
   theme_bw() +
-  ggtitle("South - Summer")
+  ggtitle("South - Summer - Seasonal lag")
 plot_summer_sd
 
 
-plot_fall_sd <- wq_long %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
+plot_fall_sd <- wq_longsn %>% filter(!is.na(Chlorophyll)) %>% filter(season == "Fall") %>%
   filter(Regions == "South") %>%
 ggplot(aes(x=Covariate_value, y=(Chlorophyll)))+
   geom_point()+
