@@ -138,9 +138,9 @@ integrated_df <- full_join(combined_df_sum, wq_r_sum, by=c("Regions", "year_mont
 
 
 # Assign seasons using ifelse statements
-integrated_df$season <- ifelse(integrated_df $Month %in% c(12, 1, 2), "Winter",
-                               ifelse(integrated_df $Month %in% c(3, 4, 5), "Spring",
-                                      ifelse(integrated_df$Month %in% c(6, 7, 8), "Summer",
+integrated_df$season <- ifelse(integrated_df $Month %in% c(1,2,3), "Winter",
+                               ifelse(integrated_df $Month %in% c(4,5,6), "Spring",
+                                      ifelse(integrated_df$Month %in% c(7,8,9), "Summer",
                                              "Autumn")))
 # Remove Suisun Marsh
 
