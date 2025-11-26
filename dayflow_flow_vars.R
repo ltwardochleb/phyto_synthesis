@@ -31,7 +31,9 @@ for(i in 1:(length(df_tot$OUT))) {
 
 df_monthmax <- df_tot %>%
   group_by(Year,Month) %>%
-  summarize(SACmax_mo = max(SAC),OUTmax_mo = max(OUT),SACmean_mo = mean(SAC),OUTmean_mo = mean(OUT)) %>%
+  summarize(SACmax_mo = max(SAC),OUTmax_mo = max(OUT),SACmean_mo = mean(SAC),OUTmean_mo = mean(OUT),
+            SAC_mean_var_m = mean(SAC_flow_var,na.rm=T),OUT_mean_var_m = mean(OUT_flow_var,na.rm=T),
+            SAC_max_var_m = max(SAC_flow_var,na.rm=T),OUT_max_var_m = max(OUT_flow_var,na.rm=T)) %>%
   mutate(Season = case_when(Month >= 1 & Month <= 3 ~ "Winter",
                             Month >= 4 & Month <= 6 ~ "Spring",
                             Month >= 7 & Month <= 9 ~ "Summer",
@@ -39,11 +41,14 @@ df_monthmax <- df_tot %>%
 
 df_seasmax <- df_tot %>%
   group_by(Year,Season) %>%
-  summarize(SACmax_s = max(SAC),OUTmax_s = max(OUT))
+  summarize(SACmax_s = max(SAC),OUTmax_s = max(OUT),
+            SAC_mean_var_s = mean(SAC_flow_var,na.rm=T),OUT_mean_var_s = mean(OUT_flow_var,na.rm=T),
+            SAC_max_var_s = max(SAC_flow_var,na.rm=T),OUT_max_var_s = max(OUT_flow_var,na.rm=T))
 
 df_seasmo_max <- df_monthmax %>% 
   group_by(Year,Season) %>%
-  summarize(SACmax_sm = max(SACmean_mo),OUTmax_sm = max(OUTmean_mo))
+  summarize(SACmax_sm = max(SACmean_mo),OUTmax_sm = max(OUTmean_mo),
+            SAC_max_var_sm = max(SAC_mean_var_m,na.rm=T),OUT_max_var_sm = max(OUT_mean_var_m,na.rm=T))
   
 df_max <- df_monthmax %>%
   merge(df_seasmax,by=c("Year","Season"),all.x=T) %>%
@@ -52,4 +57,4 @@ df_max <- df_monthmax %>%
   filter(year_month > ymd("1978-9-1")) %>%
   select(-SACmean_mo,-OUTmean_mo)
 
-write
+write_csv(df_max,"Data/flow_variables.csv")
