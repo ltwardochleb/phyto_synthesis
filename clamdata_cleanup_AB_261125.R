@@ -180,5 +180,11 @@ integrated_df$season <- ifelse(integrated_df $Month %in% c(1,2,3), "Winter",
 
 integrated_df <- integrated_df[integrated_df$Regions != "Suisun Marsh", ]
 
+#read in max dayflow
+dayflow <- read_csv("Data/flow_variables.csv") %>%
+  select(-Year,-Month,-Season)
+
+wq_r_sum <- merge(integrated_df,dayflow,by="year_month")
+
 # Write to csv
-write.csv(integrated_df, "Data/regional_integrated_dataset2.csv")                           
+write.csv(wq_r_sum, "Data/regional_integrated_dataset2.csv")                           
