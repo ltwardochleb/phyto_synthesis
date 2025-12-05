@@ -225,5 +225,6 @@ wq_r_sum_season <- wq_r_sum %>%
   mutate(seasonyear = paste0(season,year(year_month)))%>%
   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) 
 
+
 # Write to csv
 write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
