@@ -180,11 +180,50 @@ integrated_df$season <- ifelse(integrated_df $Month %in% c(1,2,3), "Winter",
 
 integrated_df <- integrated_df[integrated_df$Regions != "Suisun Marsh", ]
 
-#read in max dayflow
+#READ IN MAX DAYFLOW/VARIANCES ----------------
 dayflow <- read_csv("Data/flow_variables.csv") %>%
   select(-Year,-Month,-Season)
 
 wq_r_sum <- merge(integrated_df,dayflow,by="year_month")
 
+
+#ADD SEASONAL LAG
+
+#seasonal lag
+
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- wq_r_sum %>%
+  mutate(year = year(year_month)) %>%
+  group_by(Regions,year,season) %>%
+  summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(year = "lagyear",season = "lagseason",Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ year+1,
+    !(season == "Autumn") ~ year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>%
+  select(lagseasonyear,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
+         lagDissNitrateNitrite,lagTemperature,lagTurbidityNTU,lagConductivity,
+         lagSAC,lagOUT,lagSACmax_s:lagOUT_max_var_sm)
+
+#Step 3: Merge back with original dataset, retain all of the original dataset. 
+wq_r_sum_season <- wq_r_sum %>% 
+  mutate(seasonyear = paste0(season,year(year_month)))%>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) 
+
 # Write to csv
-write.csv(wq_r_sum, "Data/regional_integrated_dataset2.csv")                           
+write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
