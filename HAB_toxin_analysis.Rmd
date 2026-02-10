@@ -1,0 +1,67 @@
+---
+title: "HAB toxin analysis"
+author: "Schuyler Nardelli"
+date: "2026-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prep Workspace
+```{r, warning=FALSE, message=FALSE}
+# Clear environment, close any open plots
+rm(list = ls()); graphics.off()
+  
+# Load in libraries
+library(tidyverse)
+library(readxl)
+library(EDIutils)
+library(dataRetrieval)
+
+# Load BGC PE data
+data_url <- "https://www.sciencebase.gov/catalog/item/689b9185d4be0224e628ea75"
+destination_file <- "local_dataset_name.csv" # Ensure the correct file extension (e.g., .csv, .txt)
+
+# Download the file
+download.file(url = data_url, destfile = destination_file, method = "auto")
+
+
+# Load PESP data
+packageId <-"edi.2209.2"
+read_data_package_archive(packageId, path = tempdir()) 
+res <- read_data_entity_names(packageId)
+entityName <- "PESP_enumeration.csv"
+entityId <- res$entityId[res$entityName == entityName]
+raw <- read_data_entity(packageId, entityId)
+pesp <- readr::read_csv(file = raw)
+pesp$Date <- as.Date(pesp$Date)
+pesp <- pesp %>% arrange(Date, Time)
+
+# Load Discrete WQ data package (with MVI)
+wq <- read.csv("Data/Delta_Integrated_WQ.csv")
+wq_meta <- read.csv("Data/Delta_Integrated_WQ_metadata.csv")
+wq$Date <- as.Date(wq$Date)
+wq <- wq %>% separate(Station, into = c("Survey", "Station"), sep = " ")
+wq <- wq[, -c(2,4:5)]
+wq <- wq[,c("Source","Station","Date","Datetime","Sample_depth_surface","Tide",
+           "Temperature","Conductivity","Salinity","Secchi","TurbidityNTU","TurbidityFNU",
+           "DissolvedOxygen","DissolvedOxygenPercent","pH","Microcystis","Chlorophyll","Pheophytin",
+           "TotAmmonia","DissAmmonia","DissNitrateNitrite","TotPhos","DissOrthophos","TON","DON",
+           "TKN","TotAlkalinity","DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica",
+           "TOC","DOC","TDS","TSS","VSS")]
+
+# Load EMP benthic data
+clam <- read.csv("Data/combined_clams_dataset.csv")
+clam$station_name <- gsub("EMP ", "", clam$station_name)
+clam$Date <- as.Date(clam$Date)
+
+# Load Dayflow data
+df <- read.csv("Data/Dayflow/dayflow-results-1997-2023.csv")
+df$Date <- as.Date(df$Date,format = "%m/%d/%Y")
+ind <- read.csv("Data/Dayflow/wy_class_ind.csv")
+df$WY <- ifelse(df$Month >= 10, df$Year + 1, df$Year)
+df <- merge(df,ind,by="WY",all.x=TRUE)
+
+```
