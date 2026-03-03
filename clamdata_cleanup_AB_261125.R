@@ -20,78 +20,87 @@ USGS_clam <- read_excel("Data/Monthly Bivalve Metrics All - from USGS through 20
 #rename station names
 EMP_clam <- EMP_clam %>% mutate(station_name = str_extract(Station, "\\w+(?=[-]?)")) %>% mutate(station_name = paste0("EMP ", station_name))
 EMP_clam$Station <-gsub("-", "", EMP_clam$Station)
-USGS_clam <- USGS_clam %>% mutate(station_name = str_extract(Station, "\\w+(?=L|R|C)")) %>% mutate(station_name = ifelse(is.na(station_name), Station, station_name)) %>% mutate(station_name = paste0("EMP ", station_name))                   
+#replace non-detects in USGS dataset with "0"
+USGS_clam <- USGS_clam %>% mutate(station_name = str_extract(Station, "\\w+(?=L|R|C)")) %>% mutate(station_name = ifelse(is.na(station_name), Station, station_name)) %>% mutate(station_name = paste0("EMP ", station_name))%>%
+  mutate(Biomass_gAFDM_m2 = ifelse(Biomass_gAFDM_m2 == "N/D", 0, Biomass_gAFDM_m2))%>%mutate(Grazing_Rate_m3_m2_d = ifelse(Grazing_Rate_m3_m2_d == "N/D", 0, Grazing_Rate_m3_m2_d))%>% 
+  mutate(Filtration_Rate_m3_m2_d = ifelse(Filtration_Rate_m3_m2_d == "N/D", 0, Filtration_Rate_m3_m2_d)) %>%
+  mutate(across(Biomass_gAFDM_m2:Filtration_Rate_m3_m2_d, as.numeric))%>%
+  select(-c(Clam_Density_no_m2, Recruits_no_0.05m2, Average_length_mm))
 
-#changing USGS data to long format
-USGS_clam_2 <- USGS_clam %>% pivot_wider(names_from = Clam, values_from = c(Clam_Density_no_m2, Biomass_gAFDM_m2, Grazing_Rate_m3_m2_d, Filtration_Rate_m3_m2_d, Average_length_mm, Recruits_no_0.05m2))
+str(USGS_clam)
+#changing USGS data to wide format
+USGS_clam_2 <- USGS_clam %>% pivot_wider(names_from = Clam, values_from = c(Biomass_gAFDM_m2, Grazing_Rate_m3_m2_d, Filtration_Rate_m3_m2_d))%>%
+#add month and year columns to USGS dataset
+  mutate(Month= month(Date))%>%mutate(Year=year(Date))
+str(USGS_clam_2)
+USGS_clam_2[is.na(USGS_clam_2)]<-0
 
 # add a date column to EMP_clam data
 EMP_clam_2 <- EMP_clam %>%
   mutate(Month = match(Month, month.name))
-
 EMP_clam_2$Date <- make_date(EMP_clam_2$Year, EMP_clam_2$Month, 1)
 
-# USGS dataset is daily while EMP is monthly. Taking the monthly means of the USGS dataset before combining the two. 
-usgs_cols <- names(USGS_clam_2)
-usgs_cols_numeric <- usgs_cols[-1:-5]
+# not taking monthly mean before combining
+#usgs_cols <- names(USGS_clam_2)
+#usgs_cols_numeric <- usgs_cols[-1:-5]
 # Loop through each column name in the list
-for (col in usgs_cols_numeric) {
+#for (col in usgs_cols_numeric) {
   # Check if the column exists in the dataframe to avoid errors
-  if (col %in% names(USGS_clam_2)) {
-    USGS_clam_2[[col]] <- as.numeric(USGS_clam_2[[col]])}
-  }
+#  if (col %in% names(USGS_clam_2)) {
+#    USGS_clam_2[[col]] <- as.numeric(USGS_clam_2[[col]])}
+#  }
 
-monthly_mean_usgs <- USGS_clam_2 %>%
-  mutate(Date = floor_date(Date, "month")) %>%
-  group_by(Date, station_name, Latitude, Longitude, Station) %>%
-  summarize(across(all_of(usgs_cols_numeric), ~mean(.x, na.rm = TRUE)), .groups = "drop")
+#monthly_mean_usgs <- USGS_clam_2 %>%
+ # mutate(Date = floor_date(Date, "month")) %>%
+ # group_by(Date, station_name, Latitude, Longitude, Station) %>%
+ # summarize(across(all_of(usgs_cols_numeric), ~mean(.x, na.rm = TRUE)), .groups = "drop")
 
-colnames(monthly_mean_usgs)
+colnames(USGS_clam_2)
 colnames(EMP_clam_2)
-monthly_mean_usgs <- monthly_mean_usgs %>%
+USGS_clam_2 <- USGS_clam_2 %>%
   rename(
     Corbicula_biomass = Biomass_gAFDM_m2_CF,
     Potamocorbula_biomass = Biomass_gAFDM_m2_PA,
     Corbicula_GR = Grazing_Rate_m3_m2_d_CF,
     Potamocorbula_GR = Grazing_Rate_m3_m2_d_PA,
     Corbicula_FR = Filtration_Rate_m3_m2_d_CF,
-    Potamocorbula_FR = Filtration_Rate_m3_m2_d_PA
-    
-  )
+    Potamocorbula_FR = Filtration_Rate_m3_m2_d_PA)
 
-usgs = subset(monthly_mean_usgs, select = c(Date, Station, station_name, 
-                                            Corbicula_biomass, Potamocorbula_biomass, 
-                                            Corbicula_GR, Potamocorbula_GR, 
-                                            Corbicula_FR, Potamocorbula_FR, 
-                                            Latitude, Longitude))
-#ALEX EDIT - remove species separation
-usgs <- usgs %>%
-  pivot_longer(cols = Corbicula_biomass:Potamocorbula_FR,
-               names_to = "parameter",
-               values_to = "value") %>%
-  mutate(parameter = case_when(str_ends(parameter,"GR") ~ "Clam_grazing",
-                               str_ends(parameter,"biomass") ~ "Clam_biomass",
-                               str_ends(parameter,"FR") ~ "Clam_filtration")) %>%
-  filter(!is.nan(value)) %>%
-  pivot_wider(names_from = "parameter", values_from = "value", values_fn = ~mean(.x))
+#usgs = subset(USGS, select = c(Date, Station, station_name, 
+                                            #Corbicula_biomass, Potamocorbula_biomass, 
+                                            #Corbicula_GR, Potamocorbula_GR, 
+                                            #Corbicula_FR, Potamocorbula_FR, 
+                                           # Latitude, Longitude))
+#add the values from the two species from USGS dataset to get single biomass, GR, and FR value
+usgs <- USGS_clam_2%>%group_by(Date, Station)%>%mutate(Biomass=sum(Corbicula_biomass, Potamocorbula_biomass))%>%
+  mutate(Grazing_rate=sum(Corbicula_GR, Potamocorbula_GR))%>%mutate(Filtration_rate=sum(Corbicula_FR, Potamocorbula_FR))
+  #pivot_longer(cols = Corbicula_biomass:Potamocorbula_FR,
+               #names_to = "parameter",
+               #values_to = "value") %>%
+  #mutate(parameter = case_when(str_ends(parameter,"GR") ~ "Clam_grazing",
+                             #str_ends(parameter,"biomass") ~ "Clam_biomass",
+                               #str_ends(parameter,"FR") ~ "Clam_filtration")) %>%
+  #pivot_wider(names_from = "parameter", values_from = "value", values_fn = ~mean(.x))
   
 
-emp = subset(EMP_clam_2, select = c(Date, Station, station_name, Corbicula_biomass, Potamocorbula_biomass, Corbicula_GR, Potamocorbula_GR, Corbicula_FR, Potamocorbula_FR, Latitude, Longitude))
+#emp = subset(EMP_clam_2, select = c(Date, Station, station_name, Corbicula_biomass, Potamocorbula_biomass, Corbicula_GR, Potamocorbula_GR, Corbicula_FR, Potamocorbula_FR, Latitude, Longitude))
 
 
 #ALEX EDIT - remove species separation 
-emp <- emp %>%
-  pivot_longer(cols = Corbicula_biomass:Potamocorbula_FR,
-               names_to = "parameter",
-               values_to = "value") %>%
-  mutate(parameter = case_when(str_ends(parameter,"GR") ~ "Clam_grazing",
-                               str_ends(parameter,"biomass") ~ "Clam_biomass",
-                               str_ends(parameter,"FR") ~ "Clam_filtration")) %>%
-  filter(!is.nan(value)) %>%
-  pivot_wider(names_from = "parameter", values_from = "value", values_fn = ~mean(.x))
+emp <- EMP_clam_2 %>%group_by(Date, Station)%>%
+  #pivot_longer(cols = Corbicula_biomass:Potamocorbula_FR,
+               #names_to = "parameter",
+               #values_to = "value") %>%
+  mutate(Biomass=sum(Corbicula_biomass, Potamocorbula_biomass))%>%
+  mutate(Grazing_rate=sum(Corbicula_GR, Potamocorbula_GR))%>%mutate(Filtration_rate=sum(Corbicula_FR, Potamocorbula_FR))
+  #mutate(parameter = case_when(str_ends(parameter,"GR") ~ "Clam_grazing",
+                               #str_ends(parameter,"biomass") ~ "Clam_biomass",
+                              # str_ends(parameter,"FR") ~ "Clam_filtration")) %>%
+ # filter(!is.nan(value)) %>%
+  #pivot_wider(names_from = "parameter", values_from = "value", values_fn = ~mean(.x))
 
 # combine the usgs and emp clam datasets
-combined_df <- rbind(usgs, emp)
+combined_df <- left_join(usgs, emp)
 
 
 # write clam data to csv
@@ -157,7 +166,7 @@ combined_df <- st_join(combined_df.sf, regions["Regions"], join = st_intersects,
 
 names(combined_df)[names(combined_df) == "Date"] <- "year_month"
 
-#Calculate monthly average values for each region
+#Calculate monthly average values for each region_ edit: Laura need to redo this
 combined_df_sum <- combined_df %>% 
   group_by(Regions,year_month) %>%
   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
