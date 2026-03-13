@@ -41,7 +41,7 @@ rm(dayflow)
 
 #EDI ----------
 
-source("edi.731.7.r") #clean edi file
+source("Data/edi.731.7.r") #clean edi file
 
 rm("dt2") #remove extra df
 

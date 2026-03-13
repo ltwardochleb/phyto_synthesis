@@ -32,7 +32,7 @@ c = c("DissAmmonia",
       "Index",
       "season",
       "Regions", 
-      "Clam_biomass",
+      "Biomass",
       "lagSAC",
       "lagDissAmmonia",
       "lagTotPhos",
@@ -42,9 +42,9 @@ c = c("DissAmmonia",
       "lagOUT",
       "Month")
 
-df <- read.csv("Data/regional_integrated_dataset2.csv" )
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
 
-df$Date = as.Date(df$year_month)
+df$Date = as.Date(df$Date)
 
 df$logchla <- log(df$Chlorophyll)
 

@@ -158,20 +158,6 @@ edi_integrate <- st_join(edi_integrate.sf, regions["Regions"], join = st_interse
 #            OUT,
 #            Index)
 
-edi_integrate_small <- edi_integrate %>%
-    dplyr::select(year_month, Station, Month, Year, Regions,
-             Chlorophyll,
-             DissAmmonia,
-             TotAmmonia,
-             Secchi,
-             TotPhos,
-             DissNitrateNitrite,
-             Temperature,
-             TurbidityNTU,
-             Conductivity,
-             SAC,
-             OUT,
-             Index)
 
 
 combined_df.sf <- combined_df %>%
@@ -195,7 +181,7 @@ names(combined_df)[names(combined_df) == "Date"] <- "year_month"
 
 # Make the integrated dataset
 
-integrated_df <- full_join(combined_df, edi_integrate_small, by=c("Station", "Month", "Year", "year_month", "Regions"))
+integrated_df <- full_join(combined_df, edi_integrate, by=c("Station", "Month", "Year", "year_month", "Regions"))
 
 integrated_df <- integrated_df %>%
   group_by(Month, Year, Regions) %>%
@@ -241,7 +227,8 @@ wq <- left_join(integrated_df,dayflow,by=c("Year", "Month"))  %>%
 #Step 1: summarize by season 
 wq_r_sum_lagseason <- wq %>%
   group_by(Regions,Year,season) %>%
-  summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
+  #summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
 
 #Step 2: Add a column for the following season.
 #This seems counter-intuitive because the lag should be the prior season,
@@ -264,7 +251,7 @@ wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
   ungroup %>%
   select(lagseasonyear,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
          lagDissNitrateNitrite,lagTemperature,lagTurbidityNTU,lagConductivity,
-         lagSAC,lagOUT,lagSACmax_s:lagOUT_max_var_sm)
+         lagSAC,lagOUT,lagIndex, lagSACmax_s:lagOUT_max_var_sm)
 
 #Step 3: Merge back with original dataset, retain all of the original dataset. 
 wq_r_sum_season <- wq %>% 
@@ -273,11 +260,12 @@ wq_r_sum_season <- wq %>%
   select(-seasonyear)%>%
   relocate(Date)
 
-l <- names(wq_r_sum_season)[-c(1:4, 20)]
+l <- names(wq_r_sum_season)[-c(1:4, 56)]
 
 wq_r_sum_season_long <- wq_r_sum_season %>% pivot_longer(l, names_to = "variable", values_to= "value")
 
 # Write to csv
 #write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
 #New
-write.csv(wq_r_sum_season_long, "Data/regional_integrated_dataset3.csv")   
+#write.csv(wq_r_sum_season_long, "Data/regional_integrated_dataset_long.csv")   
+write.csv(wq_r_sum_season, "Data/regional_integrated_dataset3.csv")
