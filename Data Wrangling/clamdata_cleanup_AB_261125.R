@@ -114,8 +114,14 @@ write.csv(combined_df, "Data/combined_clams_dataset2.csv")
 
 # To combine with the day flow dataset, we need to assign regions to combined_df and then get average monthly values by region
 edi_integrate <- read_csv("Data/edi_df_integrate_monthly.csv")
+
+edi_integrate <- edi_integrate %>% select(-c("Year","Month")) %>%
+                 mutate(year_month = as.Date(year_month)) %>%
+                 mutate(Month = month(year_month))%>%
+                 mutate(Year = year(year_month))
+                          
 #read in region data
-regions <- st_read("Regions_shp/Rosies_regions_edited.shp")
+regions <- st_read("Data/Regions_shp/Rosies_regions_edited.shp")
 
 #change the crs to UTM zone 10N (EPSG 32610)
 regions<- st_transform(regions, crs =32610)
@@ -132,26 +138,40 @@ edi_integrate <- st_join(edi_integrate.sf, regions["Regions"], join = st_interse
   filter(!is.na(Regions)) %>%
   st_drop_geometry() 
 
-colnames(edi_integrate)
+#colnames(edi_integrate)
 #Calculate monthly average values for each region
-wq_r_sum <- edi_integrate %>% 
-  group_by(Regions,year_month) %>%
-  summarize_if(is.numeric,mean,na.rm=TRUE) %>%
-  mutate(year_month = ymd(year_month)) %>%
-  dplyr::select(year_month, Month, Regions, 
-           Chlorophyll,
-           DissAmmonia,
-           TotAmmonia,
-           Secchi,
-           TotPhos,
-           DissNitrateNitrite,
-           Temperature, 
-           TurbidityNTU,
-           Conductivity,
-           SAC,
-           OUT,
-           Index)
+# wq_r_sum <- edi_integrate %>% 
+#   group_by(Regions,year_month) %>%
+#   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
+#   mutate(year_month = ymd(year_month)) %>%
+#   dplyr::select(year_month, Month, Regions, 
+#            Chlorophyll,
+#            DissAmmonia,
+#            TotAmmonia,
+#            Secchi,
+#            TotPhos,
+#            DissNitrateNitrite,
+#            Temperature, 
+#            TurbidityNTU,
+#            Conductivity,
+#            SAC,
+#            OUT,
+#            Index)
 
+edi_integrate_small <- edi_integrate %>%
+    dplyr::select(year_month, Station, Month, Year, Regions,
+             Chlorophyll,
+             DissAmmonia,
+             TotAmmonia,
+             Secchi,
+             TotPhos,
+             DissNitrateNitrite,
+             Temperature,
+             TurbidityNTU,
+             Conductivity,
+             SAC,
+             OUT,
+             Index)
 
 
 combined_df.sf <- combined_df %>%
@@ -167,14 +187,19 @@ combined_df <- st_join(combined_df.sf, regions["Regions"], join = st_intersects,
 names(combined_df)[names(combined_df) == "Date"] <- "year_month"
 
 #Calculate monthly average values for each region_ edit: Laura need to redo this
-combined_df_sum <- combined_df %>% 
-  group_by(Regions,year_month) %>%
-  summarize_if(is.numeric,mean,na.rm=TRUE) %>%
-  mutate(year_month = ymd(year_month))
+# combined_df_sum <- combined_df %>% 
+#   group_by(Regions,year_month) %>%
+#   summarize_if(is.numeric,mean,na.rm=TRUE) %>%
+#   mutate(year_month = ymd(year_month))
+
 
 # Make the integrated dataset
 
-integrated_df <- full_join(combined_df_sum, wq_r_sum, by=c("Regions", "year_month"))
+integrated_df <- full_join(combined_df, edi_integrate_small, by=c("Station", "Month", "Year", "year_month", "Regions"))
+
+integrated_df <- integrated_df %>%
+  group_by(Month, Year, Regions) %>%
+  summarise(across(where(is.numeric), \(x) mean(x, na.rm = TRUE)))
 
 
 # Assign seasons using ifelse statements
@@ -193,17 +218,29 @@ integrated_df <- integrated_df[integrated_df$Regions != "Suisun Marsh", ]
 dayflow <- read_csv("Data/flow_variables.csv") %>%
   select(-Year,-Month,-Season)
 
-wq_r_sum <- merge(integrated_df,dayflow,by="year_month")
+dayflow$year_month <- as.Date(dayflow$year_month)
 
+dayflow <- dayflow %>%
+  mutate(Month = month(year_month)) %>%
+  mutate(Year = year(year_month)) %>%
+  subset(select = -year_month)
+
+wq <- left_join(integrated_df,dayflow,by=c("Year", "Month"))  %>%
+  mutate(Date = make_date(year = Year, month = Month, day = 1))  %>%
+  relocate(Date)%>%
+  subset(select = -c(Corbicula_density, Potamocorbula_density,Corbicula_recruits, 
+                     Potamocorbula_recruits, Corbicula_length, Potamocorbula_length,
+                     Potamocorbula_biomass, Corbicula_biomass,
+                     Potamocorbula_GR, Corbicula_GR,
+                     Potamocorbula_FR, Corbicula_FR))
 
 #ADD SEASONAL LAG
 
 #seasonal lag
 
 #Step 1: summarize by season 
-wq_r_sum_lagseason <- wq_r_sum %>%
-  mutate(year = year(year_month)) %>%
-  group_by(Regions,year,season) %>%
+wq_r_sum_lagseason <- wq %>%
+  group_by(Regions,Year,season) %>%
   summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
 
 #Step 2: Add a column for the following season.
@@ -212,7 +249,7 @@ wq_r_sum_lagseason <- wq_r_sum %>%
 #in the original table. 
 wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
   rename_with(~paste0("lag",.x)) %>%
-  rename(year = "lagyear",season = "lagseason",Regions="lagRegions") %>% 
+  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
   mutate(lagseason = case_when(
     season == "Spring" ~ "Summer",
     season == "Summer" ~ "Autumn",
@@ -220,8 +257,8 @@ wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
     season == "Winter" ~ "Spring" 
   )) %>%
   mutate(lagseasonyear = case_when(
-    season == "Autumn" ~ year+1,
-    !(season == "Autumn") ~ year
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
   )) %>%
   mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
   ungroup %>%
@@ -230,10 +267,12 @@ wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
          lagSAC,lagOUT,lagSACmax_s:lagOUT_max_var_sm)
 
 #Step 3: Merge back with original dataset, retain all of the original dataset. 
-wq_r_sum_season <- wq_r_sum %>% 
-  mutate(seasonyear = paste0(season,year(year_month)))%>%
+wq_r_sum_season <- wq %>% 
+  mutate(seasonyear = paste0(season,year(Date)))%>%
   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) 
 
 
 # Write to csv
-write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
+#write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
+#New
+write.csv(wq_r_sum_season, "Data/regional_integrated_dataset3.csv")   
