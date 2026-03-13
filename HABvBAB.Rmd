@@ -290,14 +290,16 @@ p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay - MVI-classified")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
   geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
   geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
@@ -305,7 +307,8 @@ p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date
 p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
   geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
   geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
@@ -530,14 +533,16 @@ p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay - ptox presence/absence classified")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
   geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
   geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
@@ -545,7 +550,8 @@ p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date
 p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
   geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
   geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
   geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
@@ -561,9 +567,9 @@ ggarrange(p1,p2,p4,ncol=1)
 
 ggplot(data=dat1 %>% filter(bloom == "Yes" & Microcystis > 1))+geom_point(aes(x=Microcystis,y=Rel_Biovolume_ptox))
 
-test <- dat1 %>% select(Date,Station,bloom,Microcystis,HAB_MVI,HAB_ptox)
+test <- dat1 %>% select(Date,Regions,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
 test<-unique(test)
-test <- test %>% filter(!is.na(HAB_MVI) & !is.na(HAB_ptox) & bloom == "Yes")
+test <- test %>% filter(!is.na(HAB_MVI) & bloom == "Yes")
 test$compare <- ifelse(test$HAB_MVI == test$HAB_ptox, "same", "different")
 # 88 blooms with MVI and ptox
 
@@ -574,6 +580,13 @@ test1 <- test %>% filter(compare == "different" & HAB_MVI == "HAB")
 # Of those 13 differences, 
   # 2 instances where MVI classifies BAB and ptox classifies HAB (MVI = 2 for both)
   # 11 instances where MVI classifies HAB and ptox classifies BAB (MVI = 3 for 6 of those instances and 4 for 5 of those instances)
+
+test <- dat1 %>% select(Date,Regions,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
+test<-unique(test)
+test1 <- test %>% filter(bloom == "Yes" & HAB_ptox == "HAB")
+
+ggplot(data=test1)+geom_histogram(aes(Rel_Biovolume_ptox))
+
 
 ```
 
