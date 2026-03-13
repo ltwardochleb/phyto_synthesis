@@ -117,7 +117,7 @@ points_df <- unique(points_df)
 points_df <- points_df %>% filter(!is.na(Latitude))
 points_df$id <- 1:length(points_df$Survey)
 
-regions <- st_read('Regions_shp/Rosies_regions_edited.shp')
+regions <- st_read('Data/Regions_shp/Rosies_regions_edited.shp')
 
 points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
 
@@ -281,7 +281,8 @@ Considered a BAB if MVI 1-2 and a HAB if MVI 3-5
 
 # Define HAB as MVI 3-5
 dat1$HAB_MVI <- NA
-I <- which(dat1$Microcystis %in% c(3:5)); dat1$HAB_MVI[I] <- "HAB"; rm(I)
+I <- which(dat1$Microcystis %in% c(3:5) & dat1$Month %in% c(6:10)); dat1$HAB_MVI[I] <- "HAB"; rm(I)
+I <- which(dat1$Microcystis %in% c(3:5) & dat1$Month %in% c(1:5,11:12)); dat1$HAB_MVI[I] <- "BAB"; rm(I)
 I <- which(dat1$Microcystis %in% c(1:2)); dat1$HAB_MVI[I] <- "BAB"; rm(I)
 
 # Plot
@@ -485,6 +486,94 @@ ggarrange(p1,p2,p4,ncol=1)
 ggplot() + geom_histogram(data=c, aes(x=Rel_Biovolume_cyano))
 
 rm(c,grp,tot,p,p1,p2,p3,p4,p5,x)
+
+```
+
+## Method 4: Define HAB v BAB using presence of ptox species
+```{r, warning=FALSE, message=FALSE}
+
+# Flag ptox species
+dat1$ptox_flag <- NA
+I <- which(dat1$Genus %in% c("Microcoleus","Cuspidothrix","Aphanizomenon",
+                             "Microcystis","Planktothrix") | 
+             dat1$Taxon %in% c("Dolichospermum circinale","Microseira wollei"))
+dat1$ptox_flag[I]<- "Yes"; 
+dat1$ptox_flag[is.na(dat1$ptox_flag)] <- "No"
+
+
+# Aggregate by ptox presence/absence
+#dat1$ptox_flag <- factor(dat1$ptox_flag)
+grp <- dat1 %>% group_by(Date,Month,Survey,Regions,Station,ptox_flag) %>% #,.drop = FALSE) %>%
+  summarize(Density = sum(Cells_per_mL),Biovolume = sum(Biovolume_per_mL))
+tot <- dat1 %>% group_by(Date,Month,Survey,Regions,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
+grp <- grp %>% left_join(tot,by=c("Date","Month","Survey","Regions","Station"))
+grp$Rel_Biovolume <- (grp$Biovolume/grp$Tot_Biovolume)*100;
+grp$Rel_Density <- (grp$Density/grp$Tot_Density)*100;
+
+c <- grp %>% filter(ptox_flag == "Yes")
+
+# Define HAB when ptox > 0
+c$HAB_ptox <- NA
+I <- which(c$Month %in% c(6:10)); c$HAB_ptox[I] <- "HAB"; rm(I)
+I <- which(c$Month %in% c(1:5,11:12)); c$HAB_ptox[I] <- "BAB"; rm(I)
+c <- c[,c(1:5,11,13)]
+c <- c %>% rename(Rel_Biovolume_ptox = Rel_Biovolume)
+
+dat1 <- left_join(dat1, c, by = c("Date","Month","Survey","Regions","Station"))
+dat1$HAB_ptox[is.na(dat1$HAB_ptox)] <- "BAB"
+I = which(!is.na(dat1$Biovolume_per_mL) & is.na(dat1$Rel_Biovolume_ptox)) 
+dat1$Rel_Biovolume_ptox[I]<- 0
+
+
+# Plot
+p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+#ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
+ggarrange(p1,p2,p4,ncol=1)
+
+```
+
+
+## Compare ptox to MVI
+```{r, warning=FALSE, message=FALSE}
+
+ggplot(data=dat1 %>% filter(bloom == "Yes" & Microcystis > 1))+geom_point(aes(x=Microcystis,y=Rel_Biovolume_ptox))
+
+test <- dat1 %>% select(Date,Station,bloom,Microcystis,HAB_MVI,HAB_ptox)
+test<-unique(test)
+test <- test %>% filter(!is.na(HAB_MVI) & !is.na(HAB_ptox) & bloom == "Yes")
+test$compare <- ifelse(test$HAB_MVI == test$HAB_ptox, "same", "different")
+# 88 blooms with MVI and ptox
+
+test1 <- test %>% filter(compare == "different") 
+# 75 blooms that classify differently, 13 blooms that classify differently
+
+test1 <- test %>% filter(compare == "different" & HAB_MVI == "HAB")
+# Of those 13 differences, 
+  # 2 instances where MVI classifies BAB and ptox classifies HAB (MVI = 2 for both)
+  # 11 instances where MVI classifies HAB and ptox classifies BAB (MVI = 3 for 6 of those instances and 4 for 5 of those instances)
 
 ```
 
