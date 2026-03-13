@@ -269,10 +269,15 @@ wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
 #Step 3: Merge back with original dataset, retain all of the original dataset. 
 wq_r_sum_season <- wq %>% 
   mutate(seasonyear = paste0(season,year(Date)))%>%
-  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) 
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>% 
+  select(-seasonyear)%>%
+  relocate(Date)
 
+l <- names(wq_r_sum_season)[-c(1:4, 20)]
+
+wq_r_sum_season_long <- wq_r_sum_season %>% pivot_longer(l, names_to = "variable", values_to= "value")
 
 # Write to csv
 #write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
 #New
-write.csv(wq_r_sum_season, "Data/regional_integrated_dataset3.csv")   
+write.csv(wq_r_sum_season_long, "Data/regional_integrated_dataset3.csv")   
