@@ -40,7 +40,14 @@ c = c("DissAmmonia",
       "logchla",
       "lagIndex",
       "lagOUT",
-      "Month")
+      "Month",
+      "lagSecchi",
+      "lagConductivity",
+      "Grazing_rate",
+      "Filtration_rate",
+      "lagTemperature",
+      "Chlorophyll")
+
 
 df <- read.csv("Data/regional_integrated_dataset3.csv" )
 
@@ -52,36 +59,6 @@ df <- df %>%
   select(all_of(c)) %>%
   drop_na(all_of(c))
 
-####################
-# DATA EXPLORATION #
-####################
-df_numeric = df %>% select(where(is.numeric))
-m = cor(df_numeric)
-?cor
-corrplot(m,
-  method = "color",         
-  type = "upper",           
-  addCoef.col = "black",     
-  number.cex = 0.7,          
-  tl.cex = 0.8,              
-  tl.col = "black",          
-  col = colorRampPalette(c("blue", "white", "red"))(200)
-)
-
-# Variables with pearson correlation coeff > 0.8
-# SAC X OUT = 0.92
-#SJR X OUT = 0.82
-#SAC x SJR = 0.78
-#lagSAC x lagOUT = 0.95
-
-# variables with pcc>0.4
-# DissAmmonia x DissNitrateNitrite
-#Temp x logchla
-#Sac x Index
-#SJR x Index, SJ x lagSAC, SJR x lagOUT
-#Index x lagSAC, Index x lagOUT
-#lagDissAmmonia x lagDissNitrateNitrite
-#lagTotPhos x lagDissNitraterNitrite
 
 
 
@@ -696,33 +673,9 @@ hist(log10_chla)
 
 # biplots
 
-c <- c("SJR", "EXPORT")
-
-
-
-c <- c("DissAmmonia",
-       "TotPhos",
-       "DissNitrateNitrite",
-       "Temperature",
-       "Secchi",
-       "Conductivity",
-       "SAC",
-       "Index",
-       "season",
-       "Regions", 
-       "Clam_biomass",
-       "lagSAC",
-       "lagDissAmmonia",
-       "lagTotPhos",
-       "lagDissNitrateNitrite",
-       "OUT",
-       "lagOUT",
-       "lagSecchi",
-       "lagConductivity",
-       "lagTemperature")
 #scatter
 lapply(c, function(x) {
-  ggplot(df, mapping =aes(x = .data[[x]], y = log_chla, color= Regions)) +
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
     ylab("log(Chlorphyll a)")+
     geom_point()+
     facet_wrap(~season, ncol=1)+
@@ -730,7 +683,7 @@ lapply(c, function(x) {
 
 # linear regression
 lapply(c, function(x) {
-  ggplot(df, mapping =aes(x = .data[[x]], y = log_chla, color= Regions)) +
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
     ylab("log(Chlorphyll a)")+
     geom_smooth(method="lm", se=FALSE)+
     facet_wrap(~season, ncol=1)+
@@ -744,5 +697,37 @@ ggplot(df, mapping =aes(x = Date, y=log_chla, color=Regions))+
   facet_wrap(~season, ncol=1)+
   theme_classic()
 
-?geom_line()
+ggplot(df, mapping =aes(x = Date, y=log_chla))+
+  ylab("log(Chlorphyll a)")+
+  geom_line()+
+  scale_x_date(date_breaks= "10 years")+
+  facet_wrap(~season, ncol=1)+
+  theme_classic()
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    #facet_wrap(~season, ncol=1)+
+    theme_classic()})
+
+####################
+# DATA EXPLORATION #
+####################
+df_numeric = df %>% select(where(is.numeric))
+m = cor(df_numeric)
+
+corrplot(m,
+         method = "color",         
+         type = "upper",           
+         addCoef.col = "black",     
+         number.cex = 0.7,          
+         tl.cex = 0.8,              
+         tl.col = "black",          
+         col = colorRampPalette(c("blue", "white", "red"))(200)
+)
+
+
 

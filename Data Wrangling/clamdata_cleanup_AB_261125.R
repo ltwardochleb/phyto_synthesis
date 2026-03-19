@@ -100,8 +100,9 @@ emp <- EMP_clam_2 %>%group_by(Date, Station)%>%
   #pivot_wider(names_from = "parameter", values_from = "value", values_fn = ~mean(.x))
 
 # combine the usgs and emp clam datasets
-combined_df <- left_join(usgs, emp)
-
+# I think an rbind() is more appropriate here....
+#combined_df <- left_join(usgs, emp)
+combined_df <- rbind(usgs, emp)
 
 # write clam data to csv
 ## Old - separated by species: 
@@ -182,6 +183,7 @@ names(combined_df)[names(combined_df) == "Date"] <- "year_month"
 # Make the integrated dataset
 
 integrated_df <- full_join(combined_df, edi_integrate, by=c("Station", "Month", "Year", "year_month", "Regions"))
+
 
 integrated_df <- integrated_df %>%
   group_by(Month, Year, Regions) %>%
