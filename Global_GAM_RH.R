@@ -19,35 +19,13 @@ library(stats)
 #  seasonal lag(NDOI) + seasonal lag(NH4) + seasonal lag(PO4) + 
 #  seasonal lag (NO2+NO3) + (1|Month) 
 
-c = c("DissAmmonia",
-      "TotPhos",
-      "DissNitrateNitrite",
-      "Temperature",
-      "Secchi",
-      "Conductivity",
-      "SAC",
-      "SJR",
-      "EXPORT",
-      "OUT", 
-      "Index",
-      "season",
-      "Regions", 
-      "Biomass",
-      "lagSAC",
-      "lagDissAmmonia",
-      "lagTotPhos",
-      "lagDissNitrateNitrite",
-      "logchla",
-      "lagIndex",
-      "lagOUT",
-      "Month",
-      "lagSecchi",
-      "lagConductivity",
-      "Grazing_rate",
-      "Filtration_rate",
-      "lagTemperature",
-      "Chlorophyll")
 
+c = c( "logchla", "Date","Month",  "season","Regions","SAC","lagSAC",
+       "SJR","EXPORT","OUT","lagOUT", "Index","lagIndex","DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity",  "lagConductivity","Biomass","Grazing_rate",
+      "Filtration_rate")
 
 df <- read.csv("Data/regional_integrated_dataset3.csv" )
 
@@ -58,7 +36,6 @@ df$logchla <- log(df$Chlorophyll)
 df <- df %>%
   select(all_of(c)) %>%
   drop_na(all_of(c))
-
 
 
 
@@ -706,16 +683,13 @@ ggplot(df, mapping =aes(x = Date, y=log_chla))+
 
 # linear regression
 lapply(c, function(x) {
-  ggplot(df, mapping =aes(x = .data[[x]], y = logchla)) +
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
     ylab("log(Chlorphyll a)")+
     geom_smooth(method="lm", se=FALSE)+
     geom_point()+
-    #facet_wrap(~season, ncol=1)+
     theme_classic()})
 
-####################
-# DATA EXPLORATION #
-####################
+#Corr plot
 df_numeric = df %>% select(where(is.numeric))
 m = cor(df_numeric)
 
@@ -729,5 +703,42 @@ corrplot(m,
          col = colorRampPalette(c("blue", "white", "red"))(200)
 )
 
+#######################################
+# Min Max normalized data exploration #
+#######################################
+
+
+df_minmax <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.,center=min(.), scale = max(.)-min(.)))))
+
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(df_minmax, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+
+#######################################
+# z-score standardized data exploration #
+#######################################
+
+
+df_std <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.))))
+
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(df_std, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+lapply(c, function(x) {
+  ggplot(df_std, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=TRUE)+
+    geom_point()+
+    theme_classic()})
 
 
