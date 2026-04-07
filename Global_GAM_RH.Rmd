@@ -335,6 +335,27 @@ m.l<- lm(formula = logchla ~ SAC+ EXPORT + clam_step,
 vif(m.l)
 ```
 
+# run GAM without lagNitrateNitrite
+```{r}
+m.final <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+               s(season_num, bs='cc', k=4) +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia),
+             data = df,
+             method = 'ML', 
+              select=TRUE
+             )
+summary(m.final)
+```
+
 # Plot
 
 ```{r}
@@ -349,17 +370,16 @@ c <- c("DissAmmonia",
           "Regions", 
           "clam_step",
           "lagSAC",
-          "lagDissAmmonia",
-          "lagDissNitrateNitrite")
+          "lagDissAmmonia")
 
 lapply(c, function(x) {
-  plot_predictions(m.shrink, x , points = .5) +
+  plot_predictions(m.final, x , points = .5) +
     theme_classic(base_size = 12)
 })
 
 ```
 ```{r}
-gam.check(m.shrink)
+gam.check(m.final)
 ```
 
 
