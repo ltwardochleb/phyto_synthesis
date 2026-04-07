@@ -1,0 +1,494 @@
+---
+title:
+  "Global GAM"
+author: "Ryan Hankins"
+output: 
+  html_document:
+        toc: TRUE
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+
+```{r, include=FALSE}
+
+library(mgcv)
+library(tidyverse)
+library(marginaleffects)
+library(MuMIn)
+library(car)
+library(corrplot)
+library(stats)
+```
+
+
+# GAM:
+Chla~ NH4 + (NO2+NO3) + temperature  + conductivity +  SAC + 1|Region + Season + Pre/post-clam  + seasonal lag(SAC) + seasonal lag(NH4)  + seasonal lag (NO2+NO3) 
+
+```{r}
+
+c = c( "logchla", "Date","Year", "Month",  "season","Regions","SAC","lagSAC",
+       "EXPORT","OUT","lagOUT", "Index","lagIndex","DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity",  "lagConductivity","Biomass","Grazing_rate",
+      "Filtration_rate","season_num")
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+#change Regions to factor for GAM to work as a random effect
+df$Regions = as.factor(df$Regions)
+
+#change season to numeric value for cyclic cubic spline?
+df$season_num = as.numeric(as.factor(df$season))
+
+df$logchla <- log(df$Chlorophyll)
+
+df <- df %>%
+  select(all_of(c)) %>%
+  drop_na(all_of(c))
+head(df)
+```
+
+
+# Choose the model with the best combination of flow variables
+
+```{r}
+options(na.action = "na.fail")
+# OUT (no EXPORT, no step)
+m1 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               OUT + 
+               s(Regions, bs='re') +
+               season +
+               (OUT*season) +
+               Grazing_rate +
+               lagOUT +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+# SAC (no EXPORT, no step)
+m2 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               Grazing_rate +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+# Create dataframe with pre/post clam dummy variable
+df=df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) #create dummy variable for sampling period
+
+
+# OUT + Step (no EXPORT)
+m3 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               OUT + 
+               s(Regions, bs='re') +
+               season +
+               (OUT*season) +
+            #replace grazing rate with calm step function
+               clam_step +
+               lagOUT +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+# SAC + Step (no EXPORT)
+m4 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+# OUT + EXPORT + Step
+m5 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               OUT + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (OUT*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagOUT +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+#SAC+ EXPORT + Step (best performing combo)
+m6 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+# m6 but with Season as a numeric smooth term with bs=cc (cyclic cubic spline)
+
+m7 <- gam((logchla) ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               s(season_num, bs='cc', k=4) +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+             data = df,
+             method = 'ML'
+             )
+
+```
+## Compare with AIC
+```{r}
+AIC(m1,m2,m3, m4, m5, m6, m7)
+```
+
+```{r}
+BIC(m1,m2,m3, m4, m5, m6, m7)
+```
+
+## Decisions/observations:
+- Best combo of flow variables is SAC + EXPORT
+- Not including NDOI (OUT) because it is a delta-wide flow measure. 
+- remove month random effect
+- keep season, try cyclic cubic spline bs="cc", set k=4 (m7)
+- add region as a random effect
+- models performed better with clam data as a step function
+
+## to do later:
+-explore marginal effects of variables 
+  
+# Dredge top models:
+```{r}
+# OUT (no EXPORT, no step)
+#m.1.dredge <- dredge(m1)
+#m.1.dredge
+
+```
+
+```{r}
+# SAC (no EXPORT, no step)
+m.2.dredge <- dredge(m2)
+head(m.2.dredge, 3)
+```
+
+```{r}
+# OUT + Step (no EXPORT)
+#m.3.dredge <- dredge(m3)
+#m.3.dredge
+```
+
+```{r}
+# SAC + Step (no EXPORT)
+m.4.dredge <- dredge(m4)
+head(m.4.dredge, 3)
+```
+
+```{r}
+# OUT + EXPORT + Step
+#m.5.dredge <- dredge(m5)
+#m.5.dredge
+```
+
+```{r}
+
+#SAC+ EXPORT + Step (best performing combo)
+m.6.dredge <- dredge(m6)
+head(m.6.dredge, 3)
+```
+
+```{r}
+# m6 but with as a numeric smooth term with bs=cc (cyclic cubic spline)
+m.7.dredge <- dredge(m7)
+head(m.7.dredge, 3)
+```
+
+```{r}
+#top.m1 <- get.models(m.1.dredge, 1)[[1]]
+top.m2 <- get.models(m.2.dredge, 1)[[1]]
+#top.m3 <- get.models(m.3.dredge, 1)[[1]]
+top.m4 <- get.models(m.4.dredge, 1)[[1]]
+#top.m5 <- get.models(m.5.dredge, 1)[[1]]
+top.m6 <- get.models(m.6.dredge, 1)[[1]]
+top.m7 <- get.models(m.7.dredge, 1)[[1]]
+
+```
+
+```{r}
+AIC(top.m2, top.m4, top.m6, top.m7)
+```
+
+```{r}
+BIC(top.m2, top.m4, top.m6, top.m7)
+```
+
+# Shrink top model:
+- EDF close to 0 it is effectively removed from the model
+- linear terms have EDF close to 1
+
+## identify linear terms & shrink predictors
+
+```{r}
+# setting select=TRUE 
+m.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+               s(season_num, bs='cc', k=4) +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite),
+             data = df,
+             method = 'ML', 
+              select=TRUE
+             )
+
+
+summary(m.shrink)
+```
+## Shrink observations
+- EXPORT ~ 1 (linear)
+- SAC, season_num ~0 (effectively removed from model)
+
+# Look at concurvity of smooth terms
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m.shrink)
+```
+```{r}
+concurvity(m.shrink, full =FALSE)
+```
+## concurvity notes:
+- temp x dissamm = 0.4
+- season_num x temperature = 0.7
+- lagAmmonia x LagDissNitrateNitrite = 0.4
+- lagDissNitrateNitrite x Regions =0.4
+
+# Look at variance inflation factor of linear terms
+### GIF^(1/(2DF)) >2 - moderate collinearity, GIF>3.16 = high collinearity
+https://019b2da8-edfb-a262-61be-7973c056d9ae.share.connect.posit.cloud/mlr-collinearity.html
+
+```{r}
+
+m.l<- lm(formula = logchla ~ SAC+ EXPORT + clam_step,
+            data=df)
+vif(m.l)
+```
+
+# Plot
+
+```{r}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "season_num",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_predictions(m.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+```{r}
+gam.check(m.shrink)
+```
+
+
+# Data exploration                                                            
+- outputs can be found in presentations folder, logchla exploration
+
+# Determine distribution of Chla-a
+```{r}
+# hist(df$Chlorophyll)
+# sqrt_chla <- sqrt(df$Chlorophyll)
+# hist(sqrt_chla)
+# df$log_chla <- log(df$Chlorophyll)
+# hist(df$logchla)
+# log10_chla <- log10(df$Chlorophyll)
+# hist(log10_chla)
+# 
+# 
+# log seems to have the best fit.
+# 
+# # biplots
+# 
+# #scatter{r}
+# lapply(c, function(x) {
+#   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_point()+
+#     facet_wrap(~season, ncol=1)+
+#     theme_classic()})
+# 
+# # linear regression
+# lapply(c, function(x) {
+#   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     facet_wrap(~season, ncol=1)+
+#     theme_classic()})
+# 
+# 
+# ggplot(df, mapping =aes(x = Date, y=log_chla, color=Regions))+
+#   ylab("log(Chlorphyll a)")+
+#   geom_line()+
+#   scale_x_date(date_breaks= "10 years")+
+#   facet_wrap(~season, ncol=1)+
+#   theme_classic()
+# 
+# ggplot(df, mapping =aes(x = Date, y=log_chla))+
+#   ylab("log(Chlorphyll a)")+
+#   geom_line()+
+#   scale_x_date(date_breaks= "10 years")+
+#   facet_wrap(~season, ncol=1)+
+#   theme_classic()
+# 
+# # linear regression
+# lapply(c, function(x) {
+#   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     geom_point()+
+#     theme_classic()})
+# 
+# #Corr plot
+# df_numeric = df %>% select(where(is.numeric))
+# m = cor(df_numeric)
+# 
+# corrplot(m,
+#          method = "color",
+#          type = "upper",
+#          addCoef.col = "black",
+#          number.cex = 0.7,
+#          tl.cex = 0.8,
+#          tl.col = "black",
+#          col = colorRampPalette(c("blue", "white", "red"))(200)
+# )
+# 
+# #######################################
+# # Min Max normalized data exploration #
+# #######################################
+# 
+# 
+# df_minmax <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.,center=min(.), scale = max(.)-min(.)))))
+# 
+# 
+# # linear regression
+# lapply(c, function(x) {
+#   ggplot(df_minmax, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     geom_point()+
+#     theme_classic()})
+# 
+# #######################################
+# # z-score standardized data exploration #
+# #######################################
+# 
+# 
+# df_std <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.))))
+# 
+# 
+# # linear regression
+# lapply(c, function(x) {
+#   ggplot(df_std, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     geom_point()+
+#     theme_classic()})
+# lapply(c, function(x) {
+#   ggplot(df_std, mapping =aes(x = .data[[x]], y = logchla)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=TRUE)+
+#     geom_point()+
+#     theme_classic()})
+# 
+# #############################
+# # Box Plot for Step Change  #
+# #############################
+# 
+# 
+# ggplot(df, mapping =aes(x = year_factor, y = logchla)) +
+#   ylab("log(Chlorphyll a)")+
+#   geom_boxplot()+
+#   theme_classic()
+
+```
+## Resources
+https://gsp.humboldt.edu/olm/R/05_03_GAM.html
+
+https://www.geeksforgeeks.org/r-language/generalized-additive-models-using-r/
+
+
+
+
+
