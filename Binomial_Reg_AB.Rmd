@@ -1,0 +1,55 @@
+---
+title:
+  "Binomial Regression"
+author: "Alex Berk"
+output: 
+  html_document:
+        toc: TRUE
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+
+```{r, include=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(tseries)
+library(DHARMa)
+
+conflicted::conflict_prefer("select","dplyr")
+```
+
+# Import files
+```{r}
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+```
+
+#Data Transformations
+
+```{r}
+# 1) Binary transformation of bloom absence/presence
+bloom_threshold <- mean(df$Chlorophyll,na.rm=T) + sd(df$Chlorophyll,na.rm=T)
+  
+df2 <- df %>%
+  mutate(bloom = case_when(Chlorophyll > bloom_threshold ~ 1,
+                           .default = 0))
+
+paste0("Number of blooms = ", sum(df2$bloom))
+
+# 2) other parameter transformations?
+```
+# Assess for stationarity? Ask Laura, wasn't clear on purpose 
+```{r}
+
+```
+
+
+# Model - Temperature (just to test)
+```{r}
+bigam <- glm(bloom~lagTemperature,family="binomial",data=df2)
+summary(bigam)
+```
+
+
