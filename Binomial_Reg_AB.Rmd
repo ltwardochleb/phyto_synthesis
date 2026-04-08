@@ -50,6 +50,8 @@ paste0("Number of blooms = ", sum(df2$bloom))
 ```
 # Other Transformations
 ```{r}
+# Create dataframe with pre/post clam dummy variable
+df2 <- df2%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam"))
 
 ```
 
@@ -59,5 +61,4 @@ paste0("Number of blooms = ", sum(df2$bloom))
 bigam <- glm(bloom~ Temperature,family="binomial",data=df2)
 summary(bigam)
 ```
-
 
