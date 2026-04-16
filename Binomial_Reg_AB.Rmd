@@ -15,6 +15,12 @@ knitr::opts_chunk$set(echo=TRUE)
 
 library(tidyverse)
 library(lubridate)
+library(mgcv)
+library(marginaleffects)
+library(MuMIn)
+library(car)
+library(corrplot)
+library(stats)
 library(tseries)
 library(DHARMa)
 
@@ -23,7 +29,29 @@ conflicted::conflict_prefer("select","dplyr")
 
 # Import files
 ```{r}
+c = c( "Chlorophyll","logchla", "Date","Year", "Month",  "season","Regions","SAC","lagSAC",
+       "EXPORT","OUT","lagOUT", "Index","lagIndex","DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity",  "lagConductivity","Biomass","Grazing_rate",
+      "Filtration_rate","season_num")
+
 df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+#change Regions to factor for GAM to work as a random effect
+df$Regions = as.factor(df$Regions)
+
+#change season to numeric value for cyclic cubic spline?
+df$season_num = as.numeric(as.factor(df$season))
+
+df$logchla <- log(df$Chlorophyll)
+
+df <- df %>%
+  select(all_of(c)) %>%
+  drop_na(all_of(c))
+head(df)
 ```
 
 #Bloom Absence/Presence
@@ -39,26 +67,75 @@ bloom_thresholds <- df %>%
 #mean/d group by region
 #HABs vs BABs coming from different dataset
   
-df2 <- df %>%
+df <- df %>%
   merge(bloom_thresholds,by="Regions",all.x=T) %>%
   mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
                            .default = 0))
 
-paste0("Number of blooms = ", sum(df2$bloom))
+paste0("Number of blooms = ", sum(df$bloom))
 
 
 ```
 # Other Transformations
 ```{r}
 # Create dataframe with pre/post clam dummy variable
-df2 <- df2%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam"))
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam"))
 
 ```
 
 
-# Model - Temperature (just to test)
+# Model - Ryan's top models m4 and m6
 ```{r}
-bigam <- glm(bloom~ Temperature,family="binomial",data=df2)
-summary(bigam)
+
+#Ryan's m4 - without export
+bm1 <- gam(bloom~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+            family=binomial(link = "logit"),data=df)
+
+#Ryan's m6 - with export
+bm2 <- gam(bloom~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+            family=binomial(link = "logit"),data=df)
+
+summary(bm1)
+```
+#AIC, BIC
+## Compare with AIC
+```{r}
+AIC(bm1,bm2)
+```
+
+```{r}
+BIC(bm1,bm2)
+```
+
+
+```{r}
+options(na.action = "na.fail")
+bm1.dredge <- dredge(bm1)
+head(bm1, 3)
 ```
 
