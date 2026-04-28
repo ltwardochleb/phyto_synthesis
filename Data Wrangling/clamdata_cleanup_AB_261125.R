@@ -253,7 +253,7 @@ wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
   ungroup %>%
   select(lagseasonyear,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
          lagDissNitrateNitrite,lagTemperature,lagTurbidityNTU,lagConductivity,
-         lagSAC,lagOUT,lagIndex, lagSACmax_s:lagOUT_max_var_sm)
+         lagSAC,lagOUT, lagSJR, lagDissOrthophos, lagIndex, lagSACmax_s:lagOUT_max_var_sm)
 
 #Step 3: Merge back with original dataset, retain all of the original dataset. 
 wq_r_sum_season <- wq %>% 
