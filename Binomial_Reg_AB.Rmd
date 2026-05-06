@@ -6,10 +6,10 @@ output:
   html_document:
         toc: TRUE
 ---
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE)
 ```
-
 
 ```{r, include=FALSE}
 
@@ -27,37 +27,41 @@ library(DHARMa)
 conflicted::conflict_prefer("select","dplyr")
 ```
 
-# Import files
+# Prepare data
+
 ```{r}
-c = c( "Chlorophyll","logchla", "Date","Year", "Month",  "season","Regions","SAC","lagSAC",
-       "EXPORT","OUT","lagOUT", "Index","lagIndex","DissAmmonia",
+
+options(na.action = "na.exclude")
+
+# variables to include:
+c = c( "Chlorophyll", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC", 
+       "EXPORT","OUT","lagOUT", "SJR", "lagSJR", "Index","lagIndex","DissAmmonia",
        "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
-       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
-       "lagSecchi","Conductivity",  "lagConductivity","Biomass","Grazing_rate",
-      "Filtration_rate","season_num")
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi",
+       "lagSecchi","Conductivity",  "lagConductivity","season_num", 
+       "DissOrthophos", "lagDissOrthophos", "clam_step")
+
 
 df <- read.csv("Data/regional_integrated_dataset3.csv" )
 
 df$Date = as.Date(df$Date)
 
-#change Regions to factor for GAM to work as a random effect
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+
+# Changing categorical variables to factors
 df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
 
-#change season to numeric value for cyclic cubic spline?
-df$season_num = as.numeric(as.factor(df$season))
 
-df$logchla <- log(df$Chlorophyll)
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
 
-df <- df %>%
-  select(all_of(c)) %>%
-  drop_na(all_of(c))
-head(df)
-```
+df <- subset(df, select = c) 
 
-#Bloom Absence/Presence
-
-```{r}
-# 1) Binary transformation of bloom absence/presence
+#Binary transformation of bloom absence/presence
 bloom_thresholds <- df %>%
   group_by(Regions) %>%
   summarise(mean = mean(Chlorophyll,na.rm=T),sd=sd(Chlorophyll,na.rm=T)) %>%
@@ -74,21 +78,20 @@ df <- df %>%
 
 paste0("Number of blooms = ", sum(df$bloom))
 
+# z-score standardizing the dataset for more logical comparison of predictors. This facilitates comparison of effect sizes between variables.
+df <- df %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
-```
-# Other Transformations
-```{r}
-# Create dataframe with pre/post clam dummy variable
-df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam"))
-
+df
 ```
 
+# Model - Ryan's top models
 
-# Model - Ryan's top models m4 and m6
+## m4 and m6
+
 ```{r}
 
 #Ryan's m4 - without export
-bm1 <- gam(bloom~ DissAmmonia +
+bm4 <- gam(bloom~ DissAmmonia +
                DissNitrateNitrite +
                Temperature +
                Conductivity +
@@ -101,10 +104,11 @@ bm1 <- gam(bloom~ DissAmmonia +
                lagSAC +
                lagDissAmmonia +
                lagDissNitrateNitrite,
-            family=binomial(link = "logit"),data=df)
+           family=binomial(link = "logit"),
+           data=df)
 
 #Ryan's m6 - with export
-bm2 <- gam(bloom~ DissAmmonia +
+bm6 <- gam(bloom~ DissAmmonia +
                DissNitrateNitrite +
                Temperature +
                Conductivity +
@@ -120,22 +124,186 @@ bm2 <- gam(bloom~ DissAmmonia +
                lagDissNitrateNitrite,
             family=binomial(link = "logit"),data=df)
 
-summary(bm1)
+
+summary(bm4)
+summary(bm6)
 ```
-#AIC, BIC
+
+## Adding DissOrthophos m4.po4, m6.po4
+
+```{r}
+# Orthophosphos with SAC  (no EXPORT)
+bm4.po4 <- gam(bloom ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite+
+               DissOrthophos +
+               lagDissOrthophos,
+             family=binomial(link = "logit"),data=df)
+
+#Orthophosphos with SAC+ EXPORT
+bm6.po4 <- gam(bloom ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite+
+               DissOrthophos +
+               lagDissOrthophos,
+             family=binomial(link = "logit"),data=df)
+summary(bm4.po4)
+summary(bm6.po4)
+```
+
+# AIC, BIC
+
 ## Compare with AIC
+
 ```{r}
-AIC(bm1,bm2)
+AIC(bm4,bm6,bm4.po4,bm6.po4)
 ```
 
+## Compare with BIC
+
 ```{r}
-BIC(bm1,bm2)
+BIC(bm4,bm6,bm4.po4,bm6.po4)
 ```
 
+# Dredging
 
-```{r}
+## GAMs for dredging (drop_na)
+
+```{r, include=FALSE}
+df2 <- df %>%
+  drop_na()
+
+#Ryan's m4 - without export
+
+bm4d <- gam(bloom~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+           family=binomial(link = "logit"),
+           data=df2)
+
+#Ryan's m6 - with export
+bm6d <- gam(bloom~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+            #replace grazing rate with clam step function
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite,
+            family=binomial(link = "logit"),data=df2)
+bm4.po4d <- gam(bloom ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite+
+               DissOrthophos +
+               lagDissOrthophos,
+             family=binomial(link = "logit"),data=df2)
+
+#Orthophosphos with SAC+ EXPORT
+bm6.po4d <- gam(bloom ~ DissAmmonia +
+               DissNitrateNitrite +
+               Temperature +
+               Conductivity +
+               SAC + 
+               EXPORT +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               lagSAC +
+               lagDissAmmonia +
+               lagDissNitrateNitrite+
+               DissOrthophos +
+               lagDissOrthophos,
+             family=binomial(link = "logit"),data=df2)
+```
+
+## Dredge top 4 models
+
+```{r dredging, include = FALSE}
 options(na.action = "na.fail")
-bm1.dredge <- dredge(bm1)
-head(bm1, 3)
+
+bm4.dredge <- dredge(bm4d)
+bm6.dredge <- dredge(bm6d)
+bm4.po4.dredge <- dredge(bm4.po4d)
+bm6.po4.dredge <- dredge(bm6.po4d)
+
 ```
 
+## bm4
+
+```{r}
+# bm4.dredge <- dredge(bm4)
+head(bm4.dredge)
+get.models(bm4.dredge,1)
+```
+
+## bm6
+
+```{r}
+# bm6.dredge <- dredge(bm6)
+head(bm6.dredge)
+get.models(bm6.dredge,1)
+```
+
+## bm.po4
+
+```{r}
+# bm.po4.dredge <- dredge(bm4.po4)
+head(bm.po4.dredge)
+get.models(bm.po4.dredge,1)
+```
+
+## bm.po6
+
+```{r}
+# bm.po6.dredge <- dredge(bm4.po6)
+head(bm.po6.dredge)
+get.models(bm.po6.dredge,1)
+```
+
+
+#shrink top models
