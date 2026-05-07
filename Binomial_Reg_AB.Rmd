@@ -85,51 +85,9 @@ df
 ```
 
 # Model - Ryan's top models
+Use Ryan's top models from the Global GAM result to run a binomial GAM. 
 
-## m4 and m6
-
-```{r}
-
-#Ryan's m4 - without export
-bm4 <- gam(bloom~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-            #replace grazing rate with clam step function
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite,
-           family=binomial(link = "logit"),
-           data=df)
-
-#Ryan's m6 - with export
-bm6 <- gam(bloom~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               EXPORT +
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-            #replace grazing rate with clam step function
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite,
-            family=binomial(link = "logit"),data=df)
-
-
-summary(bm4)
-summary(bm6)
-```
-
-## Adding DissOrthophos m4.po4, m6.po4
+## m4.po4, m6.po4
 
 ```{r}
 # Orthophosphos with SAC  (no EXPORT)
@@ -147,7 +105,7 @@ bm4.po4 <- gam(bloom ~ DissAmmonia +
                lagDissNitrateNitrite+
                DissOrthophos +
                lagDissOrthophos,
-             family=binomial(link = "logit"),data=df)
+             family=binomial(link = "logit"),data=df,select=T)
 
 #Orthophosphos with SAC+ EXPORT
 bm6.po4 <- gam(bloom ~ DissAmmonia +
@@ -166,8 +124,10 @@ bm6.po4 <- gam(bloom ~ DissAmmonia +
                DissOrthophos +
                lagDissOrthophos,
              family=binomial(link = "logit"),data=df)
+
 summary(bm4.po4)
-summary(bm6.po4)
+summary(bm6)
+
 ```
 
 # AIC, BIC
@@ -175,7 +135,7 @@ summary(bm6.po4)
 ## Compare with AIC
 
 ```{r}
-AIC(bm4,bm6,bm4.po4,bm6.po4)
+AIC(bm4.po4,bm6.po4)
 ```
 
 ## Compare with BIC
@@ -184,126 +144,53 @@ AIC(bm4,bm6,bm4.po4,bm6.po4)
 BIC(bm4,bm6,bm4.po4,bm6.po4)
 ```
 
-# Dredging
 
-## GAMs for dredging (drop_na)
-
-```{r, include=FALSE}
-df2 <- df %>%
-  drop_na()
-
-#Ryan's m4 - without export
-
-bm4d <- gam(bloom~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-            #replace grazing rate with clam step function
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite,
-           family=binomial(link = "logit"),
-           data=df2)
-
-#Ryan's m6 - with export
-bm6d <- gam(bloom~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               EXPORT +
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-            #replace grazing rate with clam step function
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite,
-            family=binomial(link = "logit"),data=df2)
-bm4.po4d <- gam(bloom ~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite+
-               DissOrthophos +
-               lagDissOrthophos,
-             family=binomial(link = "logit"),data=df2)
-
-#Orthophosphos with SAC+ EXPORT
-bm6.po4d <- gam(bloom ~ DissAmmonia +
-               DissNitrateNitrite +
-               Temperature +
-               Conductivity +
-               SAC + 
-               EXPORT +
-               s(Regions, bs='re') +
-               season +
-               (SAC*season) +
-               clam_step +
-               lagSAC +
-               lagDissAmmonia +
-               lagDissNitrateNitrite+
-               DissOrthophos +
-               lagDissOrthophos,
-             family=binomial(link = "logit"),data=df2)
-```
-
-## Dredge top 4 models
-
-```{r dredging, include = FALSE}
-options(na.action = "na.fail")
-
-bm4.dredge <- dredge(bm4d)
-bm6.dredge <- dredge(bm6d)
-bm4.po4.dredge <- dredge(bm4.po4d)
-bm6.po4.dredge <- dredge(bm6.po4d)
-
-```
-
-## bm4
-
-```{r}
-# bm4.dredge <- dredge(bm4)
-head(bm4.dredge)
-get.models(bm4.dredge,1)
-```
-
-## bm6
-
-```{r}
-# bm6.dredge <- dredge(bm6)
-head(bm6.dredge)
-get.models(bm6.dredge,1)
-```
+# Shrink Models
 
 ## bm.po4
+Notes: EDF of s(lagSAC) close to 0
 
 ```{r}
-# bm.po4.dredge <- dredge(bm4.po4)
-head(bm.po4.dredge)
-get.models(bm.po4.dredge,1)
+bm4.po4.shrink <- gam(bloom ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos) +
+               s(lagDissOrthophos),
+             family=binomial(link = "logit"),data=df,select=T)
+summary(bm4.po4.shrink)
 ```
+
 
 ## bm.po6
+Notes: edf of s(lagSAC) close to 0 
 
 ```{r}
-# bm.po6.dredge <- dredge(bm4.po6)
-head(bm.po6.dredge)
-get.models(bm.po6.dredge,1)
+bm6.po4.shrink <- gam(bloom ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) +
+               s(EXPORT) +   
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos) +
+               s(lagDissOrthophos),
+             family=binomial(link = "logit"),data=df,select=T)
+summary(bm6.po4.shrink)
 ```
 
 
-#shrink top models
