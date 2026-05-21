@@ -11,6 +11,12 @@ output:
 knitr::opts_chunk$set(echo=TRUE)
 ```
 
+# CURRENT QUESTIONS 
+1. When do I shrink now? All imputations (1-5)? Before imputing? After pooling? 
+2. Similarly with AIC vs BIC - do I run this check for all imputations (1-5)? Do I run models on the on the pre-imputed dataset first? 
+3. Should I calculate the bloom factor after imputing or before? (asked in light of the lag term issue) 
+4. Do I need to do log transformations as well with the binomial GAM?
+
 ```{r, include=FALSE}
 
 library(tidyverse)
@@ -94,16 +100,17 @@ df <- df %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num,
 df
 ```
 
-
 # Impute Dataset
+
 Taken from RH's Markdown file "Global_GAM_RH.html" for detailed checks. Only difference is the "bloom" value in the place of the "logChlorophyll" value.
 
-Question: Should the bloom binary be calculated AFTER the imputation? Should Chlorophyll be imputed instead of the bloom factor? 
+Question: Should the bloom binary be calculated AFTER the imputation? Should Chlorophyll be imputed instead of the bloom factor?
 
 ```{r}
 ini <- mice(df, maxit=0)
 ini$nmis
 ```
+
 ## Impute
 
 ```{r}
@@ -169,12 +176,14 @@ df_4 <- as.data.frame(df_list_lag[4])
 df_5 <- as.data.frame(df_list_lag[5])
 ```
 
-
 # Fit models with imputed datasets
-Use Ryan's top models from the Global GAM result to run a binomial GAM. 
+
+Use Ryan's top models from the Global GAM result to run a binomial GAM.
 
 ## bm4.po4
-Orthophosphos with SAC  (no EXPORT)
+
+Orthophosphos with SAC (no EXPORT)
+
 ```{r}
 bm4.po4.imp1 <- gam(bloom ~ DissAmmonia +
                DissNitrateNitrite +
@@ -261,6 +270,7 @@ model_list_bm4 = list(bm4.po4.imp1,bm4.po4.imp2,bm4.po4.imp3,bm4.po4.imp4,bm4.po
 ```
 
 ## bm6.po4
+
 Orthophosphos with SAC+ EXPORT
 
 ```{r}
@@ -354,6 +364,7 @@ model_list_bm6 <- list(bm6.po4.imp1,bm6.po4.imp2,bm6.po4.imp3,bm6.po4.imp4,bm6.p
 ```
 
 # AIC, BIC (???)
+
 Do I compare each imputation or do I do this after I pool them? Do I keep my pre-imp process?
 
 ## Compare with AIC
@@ -368,10 +379,9 @@ AIC(bm4.po4.imp1,bm4.po4.imp2,bm4.po4.imp3,bm4.po4.imp4,bm4.po4.imp5,bm6.po4.imp
 BIC(bm4.po4.imp1,bm4.po4.imp2,bm4.po4.imp3,bm4.po4.imp4,bm4.po4.imp5,bm6.po4.imp1,bm6.po4.imp2,bm6.po4.imp3,bm6.po4.imp4,bm6.po4.imp5)
 ```
 
-
 # Shrink Models (???)
-Do I shrink each imputation or do I pool them? Or do I do this pre-imputation? 
-## bm.po4
+
+Do I shrink each imputation or do I pool them? Or do I do this pre-imputation? \## bm.po4
 
 ```{r}
 bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
@@ -392,9 +402,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm6.po4.imp1.shrink)
 ```
 
-
 ## bm.po6
-
 
 ```{r}
 bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
@@ -416,4 +424,14 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm6.po4.imp1.shrink)
 ```
 
+# Pooling?
 
+```{r}
+pool(model_list_bm4)
+```
+
+## Diagnostics?
+
+```{r}
+all_diagnostics <- sapply(model_list_bm4,function(x) gam.check(x))
+```
