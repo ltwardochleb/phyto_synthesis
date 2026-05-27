@@ -12,10 +12,10 @@ knitr::opts_chunk$set(echo=TRUE)
 ```
 
 # CURRENT QUESTIONS 
-1. When do I shrink now? All imputations (1-5)? Before imputing? After pooling? 
-2. Similarly with AIC vs BIC - do I run this check for all imputations (1-5)? Do I run models on the on the pre-imputed dataset first? 
-3. Should I calculate the bloom factor after imputing or before? (asked in light of the lag term issue) 
-4. Do I need to do log transformations as well with the binomial GAM?
+1. When do I shrink now? All imputations? Before imputing? 
+2. Similarly with AIC vs BIC - do I run this check for all imputations? Do I run models on the on the pre-imputed dataset first and use those AIC and BIC values? 
+3. Should I calculate the bloom factor (0 or 1) after imputing so it reflects the imputed chlorophyll? (asked in light of Ryan re-calculating all the lag terms) 
+4. Do I need to do log transformations as well with the binomial GAM or do you want to see results first?
 
 ```{r, include=FALSE}
 
@@ -92,7 +92,7 @@ df <- df %>%
 
 df <- subset(df, select = c) 
 
-paste0("Number of blooms = ", sum(df$bloom))
+paste0("Number of blooms = ", sum(df$bloom, na.rm=T))
 
 # z-score standardizing the dataset for more logical comparison of predictors. This facilitates comparison of effect sizes between variables.
 df <- df %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
@@ -381,7 +381,9 @@ BIC(bm4.po4.imp1,bm4.po4.imp2,bm4.po4.imp3,bm4.po4.imp4,bm4.po4.imp5,bm6.po4.imp
 
 # Shrink Models (???)
 
-Do I shrink each imputation or do I pool them? Or do I do this pre-imputation? \## bm.po4
+Do I shrink each imputation or do I pool them? Or do I do this pre-imputation? 
+
+## bm.po4 Imputation 1
 
 ```{r}
 bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
@@ -402,7 +404,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm6.po4.imp1.shrink)
 ```
 
-## bm.po6
+## bm.po6 Imputation 1
 
 ```{r}
 bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
@@ -420,7 +422,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                s(lagDissNitrateNitrite)+
                s(DissOrthophos) +
                s(lagDissOrthophos),
-             family=binomial(link = "logit"),data=df_1,select=T)
+             family=binomial(link = "logit"),data=df,select=T)
 summary(bm6.po4.imp1.shrink)
 ```
 
@@ -432,6 +434,33 @@ pool(model_list_bm4)
 
 ## Diagnostics?
 
+BM4
 ```{r}
 all_diagnostics <- sapply(model_list_bm4,function(x) gam.check(x))
+```
+# Dispersion?
+
+## bm4.po4
+```{r}
+sapply(model_list_bm4,function(x) testDispersion(x))
+```
+
+## bm6.po4
+```{r}
+sapply(model_list_bm6,function(x) testDispersion(x))
+```
+# Playing with toxicity/LD50 curve
+https://www.ccohs.ca/oshanswers/chemicals/ld50.html
+
+It's giving me odd numbers, I think possibly because of the z-score normalizing.Not sure how to interpret. 
+
+Also again wondering at what point I do this in the imputation process? tried with imputation 1 temperature just to test.  
+
+```{r}
+LD50 <- -bm4.po4.imp1$coefficients[1]/bm4.po4.imp4$coefficients[4] 
+LD75 <- (log(.75/(1-.75))-bm4.po4.imp1$coefficients[1])/bm4.po4.imp1$coefficients[4]
+LD99 <- (log(.99/(1-.99))-bm4.po4.imp1$coefficients[1])/bm4.po4.imp1$coefficients[4]
+
+LD50
+
 ```
