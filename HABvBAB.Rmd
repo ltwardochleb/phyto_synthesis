@@ -1,5 +1,5 @@
 ---
-title: "HABs vs BABs"
+title: "Classifying HABs, BABs, and no blooms in 2008-2022 dataset"
 author: "Schuyler Nardelli"
 date: "`r Sys.Date()`"
 output: html_document
@@ -9,102 +9,205 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Prep Workspace
+## Load data
+Load in PESP, WQ, dayflow, and clam data. For WQ and clam data, make sure there is only one sample associated with each date and station.
 ```{r, warning=FALSE, message=FALSE}
-# Clear environment, close any open plots
+
+# Clear environment and plots
 rm(list = ls()); graphics.off()
-  
-# Load in libraries
+
+# Load libraries
 library(tidyverse)
 library(readxl)
 library(sf)
-library("ggmap")
+library(ggmap)
 library(ggpubr)
 library(EDIutils)
 
+#--------------------------------------------------
+# Helper function for loading EDI entities
+#--------------------------------------------------
+
+read_edi_entity <- function(package_id, entity_name) {
+  entity_id <- read_data_entity_names(package_id) %>%
+    filter(entityName == entity_name) %>%
+    pull(entityId)
+  raw_file <- read_data_entity(package_id, entity_id)
+  readr::read_csv(raw_file, show_col_types = FALSE)
+}
+
+#--------------------------------------------------
 # Load PESP data
-packageId <-"edi.2209.2"
-read_data_package_archive(packageId, path = tempdir()) 
-res <- read_data_entity_names(packageId)
+#--------------------------------------------------
 
-entityName <- "PESP_enumeration.csv"
-entityId <- res$entityId[res$entityName == entityName]
-raw <- read_data_entity(packageId, entityId)
-pesp <- readr::read_csv(file = raw)
+pesp <- read_edi_entity(package_id = "edi.2209.2",entity_name = "PESP_enumeration.csv") %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Date, Time)
 
-pesp$Date <- as.Date(pesp$Date)
-pesp <- pesp %>% arrange(Date, Time)
-rm(res,entityId,entityName,packageId,raw)
+#--------------------------------------------------
+# Load discrete WQ data
+#--------------------------------------------------
 
+wq <- read_edi_entity(package_id = "edi.731.7",entity_name = "Delta_Integrated_WQ.csv") %>%
+  mutate(Date = as.Date(Date)) %>%
+  separate(Station,into = c("Survey", "Station"),sep = " ") %>%
+  select(Station,Date,Sample_depth_surface,Sample_depth_nutr_surface,Sample_depth_bottom,
+         Temperature,Temperature_bottom,Conductivity,Conductivity_bottom,Salinity,Salinity_bottom,Secchi,
+         TurbidityNTU,TurbidityNTU_bottom,TurbidityFNU,TurbidityFNU_bottom,DissolvedOxygen,
+         DissolvedOxygen_bottom,DissolvedOxygenPercent,DissolvedOxygenPercent_bottom,pH,pH_bottom,
+         Microcystis,Chlorophyll,Pheophytin,TotAmmonia,DissAmmonia,DissNitrateNitrite,TotPhos,
+         DissOrthophos,TON,DON,TKN,TotAlkalinity,DissBromide,DissCalcium,TotChloride,DissChloride,
+         DissSilica,TOC,DOC,TDS,TSS,VSS) %>%
+  group_by(Date,Station)%>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+wq[is.na(wq)] <- NA
 
-# Load Discrete WQ data package (with MVI)
-packageId <-"edi.731.7"
-read_data_package_archive(packageId, path = tempdir()) 
-res <- read_data_entity_names(packageId)
-
-entityName <- "Delta_Integrated_WQ.csv"
-entityId <- res$entityId[res$entityName == entityName]
-raw <- read_data_entity(packageId, entityId)
-wq <- readr::read_csv(file = raw)
-rm(entityId,entityName,raw)
-
-entityName <- "Delta_Integrated_WQ_metadata.csv"
-entityId <- res$entityId[res$entityName == entityName]
-raw <- read_data_entity(packageId, entityId)
-wq_meta <- readr::read_csv(file = raw)
-rm(res,entityId,entityName,packageId,raw)
-
-wq$Date <- as.Date(wq$Date)
-wq <- wq %>% separate(Station, into = c("Survey", "Station"), sep = " ")
-wq <- wq[, -c(2,4:5)]
-wq <- wq[,c("Source","Station","Date","Datetime","Sample_depth_surface","Tide",
-           "Temperature","Conductivity","Salinity","Secchi","TurbidityNTU","TurbidityFNU",
-           "DissolvedOxygen","DissolvedOxygenPercent","pH","Microcystis","Chlorophyll","Pheophytin",
-           "TotAmmonia","DissAmmonia","DissNitrateNitrite","TotPhos","DissOrthophos","TON","DON",
-           "TKN","TotAlkalinity","DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica",
-           "TOC","DOC","TDS","TSS","VSS")]
-
+#--------------------------------------------------
 # Load EMP benthic data
-clam <- read.csv("Data/combined_clams_dataset.csv")
-clam$station_name <- gsub("EMP ", "", clam$station_name)
-clam$Date <- as.Date(clam$Date)
+#--------------------------------------------------
 
+clam <- read_csv("Data/combined_clams_dataset2.csv",show_col_types = FALSE) %>%
+  mutate(station_name = str_remove(station_name, "^EMP "),Date = as.Date(Date))%>%
+  group_by(Date,station_name)%>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+clam[is.na(clam)] <- NA
+
+#--------------------------------------------------
 # Load Dayflow data
-df <- read.csv("Data/Dayflow/dayflow-results-1997-2023.csv")
-df$Date <- as.Date(df$Date,format = "%m/%d/%Y")
-ind <- read.csv("Data/Dayflow/wy_class_ind.csv")
-df$WY <- ifelse(df$Month >= 10, df$Year + 1, df$Year)
-df <- merge(df,ind,by="WY",all.x=TRUE)
+#--------------------------------------------------
+
+df <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv",show_col_types = FALSE) %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%Y"),WY = ifelse(Month >= 10, Year + 1, Year)) %>%
+  left_join(read_csv("Data/Dayflow/wy_class_ind.csv",show_col_types = FALSE),by = "WY")
+
+rm(read_edi_entity)
+
+```
+
+
+## Calculate monthly clam values
+```{r, warning=FALSE, message=FALSE}
+
+# Add in region
+points_df <- clam[,c("station_name","Latitude","Longitude")]
+points_df <- unique(points_df)
+points_df <- points_df %>% filter(!is.na(Latitude))
+points_df$id <- 1:length(points_df$station_name)
+
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
+
+points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
+  st_drop_geometry() 
+
+stat <- left_join(points_sf,points_with_region,by=c("station_name"))
+coord <- data.frame(st_coordinates(stat$geometry))
+stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
+stat <- stat %>% st_drop_geometry() 
+
+clam <- left_join(clam,stat,by=c("station_name","Latitude","Longitude")) %>%
+  rename(Region = Regions)
+
+rm(stat,points_df,points_sf,points_with_region,Region)
+
+monthly_clam <- clam %>%
+  filter(!is.na(Region)) %>%
+  group_by(Year,Month,Region) %>%
+  summarize(monthly_biomass = mean(Biomass,na.rm=TRUE),
+            monthly_grazing_rate = mean(Grazing_rate,na.rm=TRUE),
+            monthly_filtration_rate = mean(Filtration_rate,na.rm=TRUE)) 
+
+
+```
+
+
+## Calculate HAB/BAB using ptox metric
+0 = absence of potentially toxigenic species, 1 = presence of potentially toxigenic species.
+```{r, warning=FALSE, message=FALSE}
+
+pesp <- pesp %>%
+  group_by(Date,Station) %>%
+  mutate(ptox = ifelse(any((Genus %in%
+                  c("Microcoleus","Cuspidothrix","Aphanizomenon","Microcystis","Planktothrix") &
+                  Taxon != "Aphanizomenon flos-aquae") |
+        Taxon %in% c("Dolichospermum circinale","Microseira wollei")),1,0)) %>%
+  ungroup()
+
+```
+
+
+## Aggregate PESP data by Algal Group
+```{r, warning=FALSE, message=FALSE}
+
+sum_na <- function(x) ifelse(all(is.na(x)), NA_real_, sum(x, na.rm = TRUE))
+
+pesp1 <- pesp %>%
+  group_by(Survey,Date,Station,Latitude,Longitude,SampleMethod,SampleDepth,DepthType,Lab,
+           CountMethodSample,CountMethodTaxa,Magnification,ptox,AlgalGroup) %>%
+  summarize(Cells_per_mL = sum_na(Cells_per_mL),
+            Units_per_mL = sum_na(Units_per_mL),
+            Biovolume_per_mL = sum_na(Biovolume_per_mL))
+
+# Calculate relative abundance/biovolume for each sample
+tot <- pesp1 %>% group_by(Date,Station) %>% summarise(tot_cells = sum_na(Cells_per_mL),
+                                                      tot_units = sum_na(Units_per_mL),
+                                                      tot_bio = sum_na(Biovolume_per_mL))
+pesp1 <- pesp1 %>% left_join(tot,by=c("Date","Station"))
+pesp1$relative_cell_density <- (pesp1$Cells_per_mL/pesp1$tot_cells)*100;
+pesp1$relative_unit_density <- (pesp1$Units_per_mL/pesp1$tot_units)*100;
+pesp1$relative_biovolume <- (pesp1$Biovolume_per_mL/pesp1$tot_bio)*100;
+
+rm(sum_na,tot)
 
 ```
 
 
 ## Merge PESP and discrete datasets
-Only include samples associated with PESP samples. Will want fields for date, station, region, chl, other discrete properties.
 ```{r, warning=FALSE, message=FALSE}
 
 # Merge wq and df
-x <- df[,c("Date","SAC","OUT","Index")]
-wq_df <- merge(wq, x, by = "Date", all.x = TRUE)
+x <- df[,c("Date","SAC","SJR","OUT","EXPORTS","Index")]
+wq_df <- left_join(wq, x, by = "Date")
 
-# Merge with benthic data
-x <- clam[,c("Date","station_name","Corbicula_biomass","Potamocorbula_biomass","Corbicula_GR","Potamocorbula_GR","Corbicula_FR","Potamocorbula_FR")]
+# Merge with clam data
+x <- clam[,c("Date","station_name","Biomass","Grazing_rate","Filtration_rate")]
 colnames(x)[colnames(x) == "station_name"] <- "Station"
 wq_df_clam <- left_join(wq_df, x, by = c("Date","Station"))
 
 # Merge with PESP data
-dat <- left_join(pesp, wq_df_clam, by = c("Date","Station"))
+dat <- left_join(pesp1, wq_df_clam, by = c("Date","Station"))
 
-# Add season info
+rm(x,wq_df_clam,wq_df)
+
+```
+
+
+## Add in Year, Month, and Season
+```{r, warning=FALSE, message=FALSE}
+
 dat$Month <- month(dat$Date)
 dat$Year <- year(dat$Date)
+
 dat$Season<- NA
 I = which(dat$Month %in% c(7:9)); dat$Season[I]<-"Summer"
-I = which(dat$Month %in% c(10:12)); dat$Season[I]<-"Fall"
+I = which(dat$Month %in% c(10:12)); dat$Season[I]<-"Autumn"
 I = which(dat$Month %in% c(1:3)); dat$Season[I]<-"Winter"
 I = which(dat$Month %in% c(4:6)); dat$Season[I]<-"Spring"
 
-rm(x,wq_df_clam,wq_df, clam, df, ind,wq,pesp,wq_meta, I)
+rm(I)
+
+```
+
+## Calculate HAB/BAB using MVI
+HAB (value of 1) if MVI = 3-5 AND occurs from June to October. 
+BAB (value of 0) if MVI = 1-2 from June to October OR if the sample was collected between November and May.
+```{r, warning=FALSE, message=FALSE}
+
+dat <- dat %>%
+  group_by(Date,Station) %>%
+  mutate(mvi = ifelse(is.na(Microcystis),NA,ifelse(Microcystis %in% 3:5 & Month %in% 6:10, 1, 0))) %>%
+  ungroup()
 
 ```
 
@@ -117,20 +220,21 @@ points_df <- unique(points_df)
 points_df <- points_df %>% filter(!is.na(Latitude))
 points_df$id <- 1:length(points_df$Survey)
 
-regions <- st_read('Data/Regions_shp/Rosies_regions_edited.shp')
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
 
 points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
 
-points_with_region <- st_join(points_sf, regions, join = st_within) %>%  
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
   st_drop_geometry() 
 
 stat <- left_join(points_sf,points_with_region,by=c("Station","Survey","id"))
 coord <- data.frame(st_coordinates(stat$geometry))
 stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
 stat <- stat %>% st_drop_geometry() %>% select(-"id")
-dat <- left_join(dat,stat,by=c("Station","Survey","Latitude","Longitude"))
+dat <- left_join(dat,stat,by=c("Station","Survey","Latitude","Longitude")) %>%
+  rename(Region = Regions)
 
-rm(stat,points_df,points_sf,points_with_region,regions)
+rm(stat,points_df,points_sf,points_with_region,Region)
 
 ```
 
@@ -138,73 +242,13 @@ rm(stat,points_df,points_sf,points_with_region,regions)
 ## Filter dataset
 ```{r, warning=FALSE, message=FALSE}
 
-dat1 <- dat %>% filter(!is.na(Regions) &   # Exclude regions outside Suisun Bay and Delta
-                        #Date > "2007-12-31" &    # Exclude data before 2008
-                        Survey %in% c("DWR-EMP","USGS-BP"))   # Exclude surveys besides EMP and BP
+dat1 <- dat %>% filter(Region %in% c("Central", "Confluence", "Suisun Bay") &   
+                        Date > "2007-12-31" &    
+                        Survey %in% c("DWR-EMP","USGS-BP"))   
 
-dat1 <- dat1[!is.na(dat1$Source), ] # Screens out PESP samples without corresponding WQ data
-dat1 <- dat1 %>% arrange(Date, Time)
+dat1 <- dat1 %>% filter(!if_all(24:62, is.na)) # Screens out PESP samples without corresponding WQ data
+dat1 <- dat1 %>% arrange(Date)
 
-rm(dat)
-
-```
-
-
-## Data coverage
-```{r, warning=FALSE, message=FALSE}
-
-ggplot(data=dat1,aes(x=Date,y=Biovolume_per_mL))+geom_point()+facet_wrap(~Regions)+
-  ylab("Biovolume (ug/mL)")
-ggplot(data=dat1,aes(x=Date,y=Cells_per_mL))+geom_point()+facet_wrap(~Regions)
-
-
-# Regions
-deltabox <- make_bbox(lat = Latitude, lon = Longitude, data = dat1, f = c(.2, .2)) #sets bounding box based on station coordinates, f value adds a buffer around the perimeter
-register_stadiamaps(key = "b4a4b8da-f8e2-4ba1-bcdc-91e9d5c83d00")
-stamenmap <- get_stadiamap(deltabox, zoom = 10, maptype = "alidade_smooth", force = TRUE, crop = TRUE)
-
-ggmap(stamenmap) +
-  geom_point(data = dat1, 
-             mapping = aes(x = Longitude, y = Latitude,fill=Regions),size=3,pch=21) +
-  #geom_text(data = dat, aes(x = Longitude, y = Latitude,label = Station),fontface = #"bold",cex=3,vjust=0.5,hjust=1.3)+
-  labs(title = "", x = "Longitude", y = "Latitude") +
-  theme_light(base_size = 12) +
-  theme(panel.grid = element_blank(),
-        strip.background = element_rect(fill = "black"),
-        strip.text = element_text(size = 10),axis.text.x = element_text(angle = 90))+
-  xlab("")+ylab("")+theme_light(base_size = 16) 
-
-# Number of samples per region per season over time
-dat1 %>% group_by(Regions, Year, Season)%>%summarize(n=n()) %>%
-  ggplot(aes(x=Year,y=Regions))+geom_tile(aes(fill=n))+
-  scale_fill_gradient(low="white",high="red")+
-  geom_text(aes(label=round(n,1)),size=4)+
-  xlab("")+ylab("")+
-  facet_grid(Season~.)+
-  theme_bw(base_size=14)+
-  theme(legend.position = "none")
-
-# Number of samples per region per month over time
-dat1 %>% group_by(Regions, Year, Month)%>%summarize(n=n()) %>%
-  ggplot(aes(x=Year,y=Regions))+geom_tile(aes(fill=n))+
-  scale_fill_gradient(low="white",high="red")+
-  geom_text(aes(label=round(n,1)),size=4)+
-  xlab("")+ylab("")+
-  facet_grid(Month~.)+
-  theme_bw(base_size=14)+
-  theme(legend.position = "none")
-
-# Number of samples per station and season over time
-dat1 %>% group_by(Station, Regions,Season,Year)%>%summarize(n=n()) %>%
-  ggplot(aes(x=Year,y=as.factor(Station)))+geom_tile(aes(fill=n))+
-  scale_fill_gradient(low="white",high="red")+
-  geom_text(aes(label=round(n,1)),size=4)+
-  xlab("")+ylab("")+facet_grid(Regions~Season,scales = 'free_y',space='free')+
-  theme_bw(base_size=14)+
-  theme(legend.position = "none")+
-  theme(axis.text.x=element_text(angle = -90, vjust = 0.3))
-
-rm(deltabox,stamenmap)
 ```
 
 
@@ -214,69 +258,356 @@ Considered "bloom" if Chla is 1 standard deviation above the mean value for the 
 
 dat1$bloom <- NA
 
-# Suisun Marsh
-test <- dat1 %>% filter(Regions=="Suisun Marsh") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
-x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "Suisun Marsh" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "Suisun Marsh" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
-
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Suisun Marsh")
-
 # Suisun Bay
-test <- dat1 %>% filter(Regions=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+test <- dat1 %>% filter(Region=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
 x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "Suisun Bay" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "Suisun Bay" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,x)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,x)
 
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Suisun Bay")
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Suisun Bay")
 
 # Confluence
-test <- dat1 %>% filter(Regions=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+test <- dat1 %>% filter(Region=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
 x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "Confluence" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "Confluence" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
 
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Confluence")
-
-# North Delta
-test <- dat1 %>% filter(Regions=="North Delta") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
-x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "North Delta" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "North Delta" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
-
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("North Delta")
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Confluence")
 
 # Central Delta
-test <- dat1 %>% filter(Regions=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+test <- dat1 %>% filter(Region=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
 x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "Central" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "Central" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
 
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="Central" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Central")
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Central" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Central")
 
-# South Delta
-test <- dat1 %>% filter(Regions=="South") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
-x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
-I <- which(dat1$Regions == "South" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
-I <- which(dat1$Regions == "South" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+ggarrange(p1,p2,p3,ncol=1)
 
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+
-  geom_point(data = dat1 %>% filter(Regions=="South" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+  ggtitle("South")
-
-#jpeg("Figures/Bloom detection/habbab_dens.jpg", units="in", width=16, height=9, res=300)
-ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
-#dev.off()
-
-rm(p,p1,p2,p3,p4,p5)
+rm(p1,p2,p3)
 
 ```
 
-## Method 1: Define HAB v BAB using MVI
+
+## Add in monthly clam data
+```{r, warning=FALSE, message=FALSE}
+
+dat1 <- left_join(dat1, monthly_clam, by = c("Year","Month","Region"))
+
+```
+
+## Data coverage
+```{r, warning=FALSE, message=FALSE}
+
+ggplot(data=dat1,aes(x=Date,y=Biovolume_per_mL))+geom_point()+facet_wrap(~Region)+
+  ylab("Biovolume (ug/mL)")
+ggplot(data=dat1,aes(x=Date,y=Cells_per_mL))+geom_point()+facet_wrap(~Region)
+
+
+# Region
+deltabox <- make_bbox(lat = Latitude, lon = Longitude, data = dat1, f = c(.2, .2)) #sets bounding box based on station coordinates, f value adds a buffer around the perimeter
+register_stadiamaps(key = "b4a4b8da-f8e2-4ba1-bcdc-91e9d5c83d00")
+stamenmap <- get_stadiamap(deltabox, zoom = 10, maptype = "alidade_smooth", force = TRUE, crop = TRUE)
+
+ggmap(stamenmap) +
+  geom_point(data = dat1, 
+             mapping = aes(x = Longitude, y = Latitude,fill=Region),size=3,pch=21) +
+  #geom_text(data = dat, aes(x = Longitude, y = Latitude,label = Station),fontface = #"bold",cex=3,vjust=0.5,hjust=1.3)+
+  labs(title = "", x = "Longitude", y = "Latitude") +
+  theme_light(base_size = 12) +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "black"),
+        strip.text = element_text(size = 10),axis.text.x = element_text(angle = 90))+
+  xlab("")+ylab("")+theme_light(base_size = 16) 
+
+# Number of samples per region per season over time
+dat1 %>% group_by(Region, Year, Season)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=Region))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+
+  facet_grid(Season~.)+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")
+
+# Number of samples per region per month over time
+dat1 %>% group_by(Region, Year, Month)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=Region))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+
+  facet_grid(Month~.)+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")
+
+# Number of samples per station and season over time
+dat1 %>% group_by(Station, Region,Season,Year)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=as.factor(Station)))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+facet_grid(Region~Season,scales = 'free_y',space='free')+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")+
+  theme(axis.text.x=element_text(angle = -90, vjust = 0.3))
+
+rm(deltabox,stamenmap)
+```
+
+
+## Backcalculate HAB/BAB using MVI and ptox
+```{r, warning=FALSE, message=FALSE}
+
+library(lme4)
+
+# Prepare data
+dat2 <- dat1 %>% filter(Month %in% (6:10))
+
+train_dat <- dat2 %>% filter(!is.na(ptox) & !is.na(mvi) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+missing_dat <- dat2 %>% filter(is.na(mvi) & !is.na(ptox) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# Fit logistic model
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), family = binomial, data = train_dat)
+
+# Use model to predict values on training data
+train_dat$prob_harmful <- predict(model,newdata = train_dat,type = "response")
+
+train_dat <- train_dat %>% 
+  mutate(pred_class = case_when(prob_harmful >= 0.4 ~ "HAB", prob_harmful < 0.4 ~ "BAB")) %>%
+  mutate(HAB_BAB_class = case_when(mvi == 1 ~ "HAB", mvi == 0 ~ "BAB"))
+
+# Use model to predict values on missing data
+missing_dat$prob_harmful <- predict(model,newdata = missing_dat,type = "response")
+
+missing_dat <- missing_dat %>% 
+  mutate(pred_class = case_when(prob_harmful >= 0.4 ~ "HAB", prob_harmful < 0.4 ~ "BAB"))
+missing_dat$HAB_BAB_class <- missing_dat$pred_class;
+
+# Add modeled data to main data frame
+dat1$prob_harmful <- NA; dat1$pred_class <- NA; dat1$HAB_BAB_class <- NA; dat1$modeled <- NA
+dat1 <- dat1 %>%
+  mutate(
+    prob_harmful  = ifelse(Month %in% c(11, 12, 1:5), NA_real_, prob_harmful),
+    pred_class = ifelse(Month %in% c(11, 12, 1:5), NA_character_, pred_class),
+    HAB_BAB_class = ifelse(Month %in% c(11, 12, 1:5), "BAB", HAB_BAB_class),
+    modeled       = ifelse(Month %in% c(11, 12, 1:5), "No", modeled)
+  )
+
+train_dat$modeled <- "No"
+missing_dat$modeled <- "Yes"
+
+dat1 <- dat1 %>%
+  rows_update(missing_dat %>% select(Month, Date, Station, prob_harmful, pred_class, HAB_BAB_class, modeled),
+              by = c("Month", "Date", "Station")) %>%
+  rows_update(train_dat %>% select(Month, Date, Station, prob_harmful, pred_class, HAB_BAB_class, modeled),
+              by = c("Month", "Date", "Station"))
+
+# Add in third designation - HAB, BAB and no bloom
+dat1 <- dat1 %>%
+  mutate(harmful_class = case_when(
+    HAB_BAB_class == "HAB" ~ "HAB",
+    HAB_BAB_class == "BAB" & bloom == "Yes" ~ "BAB",
+    HAB_BAB_class == "BAB" & bloom == "No" ~ "No bloom",
+    TRUE ~ NA_character_
+  ))
+
+rm(dat2,model)
+
+```
+
+
+## Reorder and save final dataset
+```{r, warning=FALSE, message=FALSE}
+
+dat <- dat1[, c("Survey","Year","Season","Month","Date","Region","Station","Latitude","Longitude",
+                 "SampleMethod","SampleDepth","DepthType","Lab","CountMethodSample","CountMethodTaxa",
+                 "Magnification","AlgalGroup","Cells_per_mL","Units_per_mL","Biovolume_per_mL","tot_cells",
+                 "tot_units","tot_bio","relative_cell_density","relative_unit_density","relative_biovolume",
+                 "bloom","ptox","mvi","prob_harmful","pred_class","HAB_BAB_class","modeled","harmful_class",
+                 "Sample_depth_surface","Sample_depth_nutr_surface","Sample_depth_bottom","Microcystis",
+                 "Chlorophyll","Pheophytin","Temperature","Temperature_bottom","Conductivity",
+                 "Conductivity_bottom","Salinity","Salinity_bottom","Secchi","TurbidityNTU",
+                 "TurbidityNTU_bottom","TurbidityFNU","TurbidityFNU_bottom","DissolvedOxygen",
+                 "DissolvedOxygen_bottom","DissolvedOxygenPercent","DissolvedOxygenPercent_bottom","pH",
+                 "DissAmmonia","DissNitrateNitrite","TotPhos","DissOrthophos","TON","DON","TKN",
+                 "DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica","TOC","DOC","TDS",
+                 "TSS","VSS","SAC","SJR","OUT","EXPORTS","Index","Biomass","Grazing_rate","Filtration_rate",
+                 "monthly_biomass","monthly_grazing_rate","monthly_filtration_rate")]
+
+save(dat, clam, df, pesp, wq, file = "Data/integrated_dataset_2008-2022.RData")
+
+```
+
+
+## HAB/BAB modeled vs observed figures
+```{r, warning=FALSE, message=FALSE}
+
+# Plot final dataset
+p<- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Confluence" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+p1<- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Suisun Bay" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+
+p2 <- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Central" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Region=="Central" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+tiff("../phyto_synthesis/Figures/HAB v BAB/final_hab_bab_dataset.tiff", units="in", width=12, height=8, res=300)
+ggarrange(p2,p,p1,ncol=1,common.legend=TRUE)
+dev.off()
+
+
+# Compare real MVI to predicted MVI in training data
+train_dat <- train_dat %>%
+  mutate(color = case_when(
+    pred_class == "BAB" & HAB_BAB_class == "BAB" ~ "blue",
+    pred_class == "HAB" & HAB_BAB_class == "HAB" ~ "red",
+    pred_class == "BAB" & HAB_BAB_class == "HAB" ~ "orange",
+    pred_class == "HAB" & HAB_BAB_class == "BAB" ~ "green",
+    TRUE ~ NA_character_
+  ))
+train_dat <- train_dat %>% arrange(Date)
+
+p <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Central"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Central Delta, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+p1 <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Confluence"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Confluence, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+p2 <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Suisun Bay"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Suisun Bay, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+tiff("../phyto_synthesis/Figures/HAB v BAB/real_v_modeled.tiff", units="in", width=12, height=8, res=300)
+ggarrange(p,p1,p2,ncol=1,common.legend=TRUE,legend="bottom")
+dev.off()
+
+```
+
+
+## HAB/BAB model validation
+```{r, warning=FALSE, message=FALSE}
+
+library(pROC)      # AUC
+library(caret) 
+library(lme4)
+
+# Prepare data
+dat2 <- dat1 %>% filter(Month %in% (6:10))
+
+train_dat <- dat2 %>% filter(!is.na(ptox) & !is.na(mvi) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+missing_dat <- dat2 %>% filter(is.na(mvi) & !is.na(ptox) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# Fit logistic model
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), family = binomial, data = train_dat)
+summary(model)
+
+# Cross validation
+set.seed(123)
+ctrl <- trainControl(method = "cv",number = 5,classProbs = TRUE,summaryFunction = twoClassSummary)
+train_dat$harmful_factor <- factor(ifelse(train_dat$mvi == 1, "yes", "no"))
+
+cv_model <- train(harmful_factor ~ ptox + Region * Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Check model output results
+train_dat$prob_harmful <- predict(model, type = "response")
+ggplot(data=train_dat)+geom_point(aes(y=prob_harmful,x=Chlorophyll))
+ggplot(data=train_dat)+geom_point(aes(y=prob_harmful,x=ptox))
+
+# Validate model
+
+# AUC
+roc_obj <- roc(train_dat$mvi, train_dat$prob_harmful)
+auc_val <- auc(roc_obj)
+
+print(auc_val)
+# AUC ≥ 0.75 → strong enough to justify back-calculation
+# AUC 0.65–0.75 → usable, but report uncertainty carefully
+# AUC < 0.65 → ptox alone may not be reliable predictor
+
+# AUC-PR
+
+# Get predicted probabilities (not class predictions)
+probs <- predict(model,newdata = train_dat,type = "response")
+actual <- train_dat$mvi
+
+# Precision-Recall curve
+pr <- PRROC::pr.curve(scores.class0 = probs, weights.class0 = actual, curve = TRUE)
+plot(pr)
+pr$auc.integral  # Your AUC-PR value
+
+# Confusion matrices
+train_dat$prob_harmful <- predict(model,newdata = train_dat,type = "response")
+
+train_dat <- train_dat %>% 
+  mutate(pred_class = case_when(prob_harmful >= 0.4 ~ "HAB", prob_harmful < 0.4 ~ "BAB")) %>%
+  mutate(HAB_BAB_class = case_when(mvi == 1 ~ "HAB", mvi == 0 ~ "BAB"))
+
+confusionMatrix(factor(train_dat$pred_class),factor(train_dat$HAB_BAB_class), positive = "HAB")
+
+```
+
+
+
+## (no longer use) Method 1: Define HAB v BAB using MVI
 Considered a BAB if MVI 1-2 and a HAB if MVI 3-5
 ```{r, warning=FALSE, message=FALSE}
 
@@ -285,55 +616,56 @@ dat1$HAB_MVI <- NA
 I <- which(dat1$Microcystis %in% c(3:5) & dat1$Month %in% c(6:10)); dat1$HAB_MVI[I] <- "HAB"; rm(I)
 I <- which(dat1$Microcystis %in% c(3:5) & dat1$Month %in% c(1:5,11:12)); dat1$HAB_MVI[I] <- "BAB"; rm(I)
 I <- which(dat1$Microcystis %in% c(1:2)); dat1$HAB_MVI[I] <- "BAB"; rm(I)
+dat1 <- dat1 %>% filter(Date > "2008-01-01")
 
 # Plot
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),pch=21,color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),pch=21,color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p11<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay, MVI")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("")+xlab("")
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p9<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence, MVI")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("Chlorophyll (µg/L)")+xlab("")
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p10<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central, MVI")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("")+xlab("")
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Region=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_MVI=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_MVI=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
 #ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
 
 tiff("../phyto_synthesis/Figures/HABvBAB_MVI.jpeg", units="in", width=5, height=6, res=300)
-ggarrange(p1,p2,p4,ncol=1)
+ggarrange(p11,p9,p10,ncol=1)
 dev.off()
 
 rm(p,p1,p2,p3,p4,p5)
 
 ```
 
-## Method 2a: Define HAB v BAB using cyanobacterial density from WHO (2006)
+## (no longer use) Method 2a: Define HAB v BAB using cyanobacterial density from WHO (2006)
 Density thresholds from World Health Organization guidance levels, found in Kudela et al. (2023).
 Could classify "HAB" as medium and high risk, or just high risk.
 ```{r, warning=FALSE, message=FALSE}
 
 # Aggregate by group
-grp <- dat1 %>% group_by(Date,Survey,Regions,Station,AlgalGroup) %>%
+grp <- dat1 %>% group_by(Date,Survey,Region,Station,AlgalGroup) %>%
   summarize(Density = sum(Cells_per_mL),Biovolume = sum(Biovolume_per_mL))
-tot <- dat1 %>% group_by(Date,Survey,Regions,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
-grp <- grp %>% left_join(tot,by=c("Date","Survey","Regions","Station"))
+tot <- dat1 %>% group_by(Date,Survey,Region,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
+grp <- grp %>% left_join(tot,by=c("Date","Survey","Region","Station"))
 
 c <- grp %>% filter(AlgalGroup == "Cyanobacteria")
 
@@ -345,33 +677,33 @@ I <- which(c$Density >=100000); c$HAB_cyano[I] <- "High"; rm(I)
 c <- c[,c(1:4,6,10)]
 c <- c %>% rename(Density_cyano = Density)
 
-dat1 <- left_join(dat1, c, by = c("Date","Survey","Regions","Station"))
+dat1 <- left_join(dat1, c, by = c("Date","Survey","Region","Station"))
 
 # Plot
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p4<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Region=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano=="Low"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano=="Med"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano=="High"),aes(x=Date,y=Chlorophyll),color="red")
 #ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
 ggarrange(p1,p2,p4,ncol=1)
 
@@ -381,16 +713,16 @@ rm(p,p1,p2,p3,p4,p5,c,grp,tot)
 
 ```
 
-## Method 2b: Define HAB v BAB using cyanobacterial biovolume from WHO (2021)
+## (no longer use) Method 2b: Define HAB v BAB using cyanobacterial biovolume from WHO (2021)
 Biovolume thresholds from World Health Organization guidance levels, 2021.
 Could classify "HAB" as alert levels 1 and 2, or just alert level 2.
 ```{r, warning=FALSE, message=FALSE}
 
 # Aggregate by group
-grp <- dat1 %>% group_by(Date,Survey,Regions,Station,AlgalGroup) %>%
+grp <- dat1 %>% group_by(Date,Survey,Region,Station,AlgalGroup) %>%
   summarize(Density = sum(Cells_per_mL),Biovolume = sum(Biovolume_per_mL))
-tot <- dat1 %>% group_by(Date,Survey,Regions,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
-grp <- grp %>% left_join(tot,by=c("Date","Survey","Regions","Station"))
+tot <- dat1 %>% group_by(Date,Survey,Region,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
+grp <- grp %>% left_join(tot,by=c("Date","Survey","Region","Station"))
 
 c <- grp %>% filter(AlgalGroup == "Cyanobacteria")
 
@@ -402,39 +734,39 @@ I <- which(c$Biovolume >=8e+6); c$HAB_cyano2[I] <- "AlertL2"; rm(I)
 c <- c[,c(1:4,7,10)]
 c <- c %>% rename(Biovolume_cyano = Biovolume)
 
-dat1 <- left_join(dat1, c, by = c("Date","Survey","Regions","Station"))
+dat1 <- left_join(dat1, c, by = c("Date","Survey","Region","Station"))
 
 # Plot
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("")+xlab("")
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("Chlorophyll (µg/L)")+xlab("")
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
+p4<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="orange")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+ylab("")+xlab("")
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Region=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano2=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano2=="AlertL1"),aes(x=Date,y=Chlorophyll),color="orange")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano2=="AlertL2"),aes(x=Date,y=Chlorophyll),color="red")
 #ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
 
 tiff("../phyto_synthesis/Figures/HABvBAB_WHO.jpeg", units="in", width=5, height=6, res=300)
@@ -447,15 +779,15 @@ rm(p,p1,p2,p3,p4,p5,c,grp,tot)
 
 ```
 
-## Method 3: Define HAB v BAB using cyanobacterial relative abundance
+## (no longer use) Method 3: Define HAB v BAB using cyanobacterial relative abundance
 Define HAB as a cyanobacterial relative biovolume > 50%
 ```{r, warning=FALSE, message=FALSE}
 
 # Aggregate by group
-grp <- dat1 %>% group_by(Date,Survey,Regions,Station,AlgalGroup) %>%
+grp <- dat1 %>% group_by(Date,Survey,Region,Station,AlgalGroup) %>%
   summarize(Density = sum(Cells_per_mL),Biovolume = sum(Biovolume_per_mL))
-tot <- dat1 %>% group_by(Date,Survey,Regions,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
-grp <- grp %>% left_join(tot,by=c("Date","Survey","Regions","Station"))
+tot <- dat1 %>% group_by(Date,Survey,Region,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
+grp <- grp %>% left_join(tot,by=c("Date","Survey","Region","Station"))
 grp$Rel_Biovolume <- (grp$Biovolume/grp$Tot_Biovolume)*100;
 grp$Rel_Density <- (grp$Density/grp$Tot_Density)*100;
 
@@ -469,33 +801,33 @@ I <- which(c$Rel_Biovolume >=x); c$HAB_cyano_ra[I] <- "HAB"; rm(I)
 c <- c[,c(1:4,10,12)]
 c <- c %>% rename(Rel_Biovolume_cyano = Rel_Biovolume)
 
-dat1 <- left_join(dat1, c, by = c("Date","Survey","Regions","Station"))
+dat1 <- left_join(dat1, c, by = c("Date","Survey","Region","Station"))
 
 # Plot
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p4<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Region=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano_ra=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_cyano_ra=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
 #ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
 ggarrange(p1,p2,p4,ncol=1)
 
@@ -505,7 +837,7 @@ rm(c,grp,tot,p,p1,p2,p3,p4,p5,x)
 
 ```
 
-## Method 4: Define HAB v BAB using presence of ptox species
+## (no longer use) Method 4: Define HAB v BAB using presence of ptox species
 ```{r, warning=FALSE, message=FALSE}
 
 # Flag ptox species
@@ -520,10 +852,10 @@ dat1$ptox_flag[is.na(dat1$ptox_flag)] <- "No"
 
 # Aggregate by ptox presence/absence
 #dat1$ptox_flag <- factor(dat1$ptox_flag)
-grp <- dat1 %>% group_by(Date,Month,Survey,Regions,Station,ptox_flag) %>% #,.drop = FALSE) %>%
+grp <- dat1 %>% group_by(Date,Month,Survey,Region,Station,ptox_flag) %>% #,.drop = FALSE) %>%
   summarize(Density = sum(Cells_per_mL),Biovolume = sum(Biovolume_per_mL))
-tot <- dat1 %>% group_by(Date,Month,Survey,Regions,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
-grp <- grp %>% left_join(tot,by=c("Date","Month","Survey","Regions","Station"))
+tot <- dat1 %>% group_by(Date,Month,Survey,Region,Station) %>% summarise(Tot_Density = sum(Cells_per_mL),Tot_Biovolume = sum(Biovolume_per_mL))
+grp <- grp %>% left_join(tot,by=c("Date","Month","Survey","Region","Station"))
 grp$Rel_Biovolume <- (grp$Biovolume/grp$Tot_Biovolume)*100;
 grp$Rel_Density <- (grp$Density/grp$Tot_Density)*100;
 
@@ -536,57 +868,57 @@ I <- which(c$Month %in% c(1:5,11:12)); c$HAB_ptox[I] <- "BAB"; rm(I)
 c <- c[,c(1:5,11,13)]
 c <- c %>% rename(Rel_Biovolume_ptox = Rel_Biovolume)
 
-dat1 <- left_join(dat1, c, by = c("Date","Month","Survey","Regions","Station"))
+dat1 <- left_join(dat1, c, by = c("Date","Month","Survey","Region","Station"))
 dat1$HAB_ptox[is.na(dat1$HAB_ptox)] <- "BAB"
 I = which(!is.na(dat1$Biovolume_per_mL) & is.na(dat1$Rel_Biovolume_ptox)) 
 dat1$Rel_Biovolume_ptox[I]<- 0
 
 
 # Plot
-p<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p1<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Marsh"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Marsh")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Marsh"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay,ptox presence/absence")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="BAB"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay"&bloom=="Yes"&HAB_ptox=="HAB"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+xlab("")+ylab("")
-p2<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Confluence"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p4<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence" & Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence,ptox presence/absence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_ptox=="BAB"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence"&bloom=="Yes"&HAB_ptox=="HAB"& Date > "2008-01-01"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+xlab("")+ylab("Chlorophyll (µg/L)")
-p3<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="North Delta"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
-p4<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
-  geom_point(data = dat1 %>% filter(Regions=="Central"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
+p5<-ggplot()+geom_path(data = dat1 %>% filter(Region=="North Delta"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("North Delta")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="North Delta"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p6<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central,ptox presence/absence")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="blue")+
+  geom_point(data = dat1 %>% filter(Region=="Central"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),size=2,pch=21,fill="red")+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+xlab("")+ylab("")
-p5<-ggplot()+geom_path(data = dat1 %>% filter(Regions=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
-  geom_point(data = dat1 %>% filter(Regions=="South"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
+p7<-ggplot()+geom_path(data = dat1 %>% filter(Region=="South"),aes(x=Date,y=Chlorophyll),color="black")+ggtitle("South")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"),aes(x=Date,y=Chlorophyll),color="gray")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_ptox=="BAB"),aes(x=Date,y=Chlorophyll),color="green")+
+  geom_point(data = dat1 %>% filter(Region=="South"&bloom=="Yes"&HAB_ptox=="HAB"),aes(x=Date,y=Chlorophyll),color="red")
 #ggarrange(p,p1,p2,p3,p4,p5,ncol=2,nrow=3)
 
 tiff("../phyto_synthesis/Figures/HABvBAB_ptox.jpeg", units="in", width=5, height=6, res=300)
-ggarrange(p1,p2,p4,ncol=1)
+ggarrange(p3,p4,p6,ncol=1)
 dev.off()
 
 ```
 
 
-## Compare ptox to MVI
+## (no longer use) Compare ptox to MVI
 ```{r, warning=FALSE, message=FALSE}
 
 ggplot(data=dat1 %>% filter(bloom == "Yes" & Microcystis > 1))+geom_point(aes(x=Microcystis,y=Rel_Biovolume_ptox))
 
-test <- dat1 %>% select(Date,Regions,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
+test <- dat1 %>% select(Date,Region,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
 test<-unique(test)
-test <- test %>% filter(!is.na(HAB_MVI) & bloom == "Yes")
+test <- test %>% filter(!is.na(HAB_MVI) & !is.na(HAB_ptox) &bloom == "Yes")
 test$compare <- ifelse(test$HAB_MVI == test$HAB_ptox, "same", "different")
 # 88 blooms with MVI and ptox
 
@@ -598,7 +930,7 @@ test1 <- test %>% filter(compare == "different" & HAB_MVI == "HAB")
   # 2 instances where MVI classifies BAB and ptox classifies HAB (MVI = 2 for both)
   # 11 instances where MVI classifies HAB and ptox classifies BAB (MVI = 3 for 6 of those instances and 4 for 5 of those instances)
 
-test <- dat1 %>% select(Date,Regions,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
+test <- dat1 %>% select(Date,Region,Station,bloom,Microcystis,Rel_Biovolume_ptox,HAB_MVI,HAB_ptox)
 test<-unique(test)
 test1 <- test %>% filter(bloom == "Yes" & HAB_ptox == "HAB")
 
@@ -608,7 +940,7 @@ ggplot(data=test1)+geom_histogram(aes(Rel_Biovolume_ptox))
 ```
 
 
-## Compare agreement between methods
+## (no longer use) Compare agreement between methods
 ```{r, warning=FALSE, message=FALSE}
 
 # Method 1: MVI
@@ -674,3 +1006,214 @@ test %>% group_by(Density, RelBio)%>%summarize(n=n()) %>%
   theme(legend.position = "none")
 
 ```
+
+## (no longer use) Test models
+```{r, warning=FALSE, message=FALSE}
+library(dplyr)
+library(pROC)      # AUC
+library(caret) 
+library(lme4)
+
+# Prepare data
+dat1$HAB_ptox2 <- ifelse(dat1$HAB_ptox == "HAB", 1, 0)
+dat1$HAB_MVI2 <- ifelse(dat1$HAB_MVI == "HAB", 1, 0)
+dat1 <- dat1 %>% filter(Region %in% c("Central","Suisun Bay","Confluence"))
+
+#test
+dat1$mvi<-NA; I = which(dat1$Microcystis %in% c(1:2)); dat1$mvi[I]<- 0
+I = which(dat1$Microcystis %in% c(3:5)); dat1$mvi[I]<- 1
+dat1$ptox <- ifelse(dat1$ptox_flag == "Yes", 1, 0)
+train_dat <- dat1 %>% filter(!is.na(ptox) & !is.na(mvi) & Month %in% c(6:10)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,Temperature,Microcystis,ptox_flag,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,Temperature,Microcystis,ptox_flag,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+train_dat2 <- dat1 %>% filter(!is.na(ptox) & !is.na(mvi) & Month %in% c(6:10)&bloom=="Yes") %>%
+  select(Month,Date,Region,Station,Chlorophyll,Temperature,Microcystis,ptox_flag,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,Temperature,Microcystis,ptox_flag,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# Preliminary figures
+ggplot(data=train_dat)+
+  geom_point(aes(x=Chlorophyll,y=Microcystis,color=as.factor(ptox)))+
+  ggtitle("All sampling dates")
+
+
+counts1 <- train_dat %>%group_by(Microcystis) %>%
+  summarise(n = sum(!is.na(Chlorophyll)), .groups = "drop")
+counts2 <- train_dat2 %>%group_by(Microcystis) %>%
+  summarise(n = sum(!is.na(Chlorophyll)), .groups = "drop")
+p<-ggplot(data=train_dat)+
+  geom_boxplot(aes(x=Microcystis,y=Chlorophyll,group=Microcystis))+scale_y_log10()+
+  geom_text(data = counts1,aes(x = Microcystis, y = max(dat1$Chlorophyll, na.rm = TRUE), 
+      label = paste0("n=", n)),vjust = -0.5) +
+  ggtitle("All sampling dates")
+p1<-ggplot(data=train_dat2)+
+  geom_boxplot(aes(x=Microcystis,y=Chlorophyll,group=Microcystis))+scale_y_log10()+
+  geom_text(data = counts2,aes(x = Microcystis, y = max(dat1$Chlorophyll, na.rm = TRUE), 
+        label = paste0("n=", n)),vjust = -0.5) +
+  ggtitle("Only blooms")
+ggarrange(p,p1,ncol=1)
+
+counts1 <- train_dat %>%group_by(ptox_flag) %>%
+  summarise(n = sum(!is.na(Chlorophyll)), .groups = "drop")
+counts2 <- train_dat2 %>%group_by(ptox_flag) %>%
+  summarise(n = sum(!is.na(Chlorophyll)), .groups = "drop")
+p<-ggplot(data=train_dat)+
+  geom_boxplot(aes(x=ptox_flag,y=Chlorophyll,group=ptox_flag))+scale_y_log10()+
+  geom_text(data = counts1,aes(x = ptox_flag, y = max(dat1$Chlorophyll, na.rm = TRUE), 
+      label = paste0("n=", n)),vjust = -0.5) +
+  ggtitle("All sampling dates")
+p1<-ggplot(data=train_dat2)+
+  geom_boxplot(aes(x=ptox_flag,y=Chlorophyll,group=ptox_flag))+scale_y_log10()+
+  geom_text(data = counts2,aes(x = ptox_flag, y = max(dat1$Chlorophyll, na.rm = TRUE), 
+        label = paste0("n=", n)),vjust = -0.5) +
+  ggtitle("Only blooms")
+ggarrange(p,p1,ncol=1)
+
+counts_all <- train_dat %>%group_by(Month, Microcystis) %>%summarise(n = n(), .groups = "drop")
+counts_bloom <- train_dat2 %>%group_by(Month, Microcystis) %>%summarise(n = n(), .groups = "drop")
+p <- ggplot(counts_all) +
+  geom_point(aes(x = as.factor(Month),y = Microcystis,color = n),size=9)+
+  geom_text(aes(x = as.factor(Month),y = Microcystis,label = n),size = 4,fontface = "bold") +
+  scale_color_distiller(palette = "YlOrRd", direction = 1) +
+  ggtitle("All sampling dates")
+p1 <- ggplot(counts_bloom) +
+  geom_point(aes(x = as.factor(Month),y = Microcystis,color = n),size=9)+
+  geom_text(aes(x = as.factor(Month),y = Microcystis,label = n),size = 4,fontface = "bold") +
+  scale_color_distiller(palette = "YlOrRd", direction = 1) +ggtitle("Only blooms")
+ggarrange(p,p1,ncol=1)
+
+counts_all <- train_dat %>%group_by(Month, ptox_flag) %>%summarise(n = n(), .groups = "drop")
+counts_bloom <- train_dat2 %>%group_by(Month, ptox_flag) %>%summarise(n = n(), .groups = "drop")
+p <- ggplot(counts_all) +
+  geom_point(aes(x = as.factor(Month),y = ptox_flag,color = n),size=9)+
+  geom_text(aes(x = as.factor(Month),y = ptox_flag,label = n),size = 4,fontface = "bold") +
+  scale_color_distiller(palette = "YlOrRd", direction = 1) +
+  ggtitle("All sampling dates")
+p1 <- ggplot(counts_bloom) +
+  geom_point(aes(x = as.factor(Month),y = ptox_flag,color = n),size=9)+
+  geom_text(aes(x = as.factor(Month),y = ptox_flag,label = n),size = 4,fontface = "bold") +
+  scale_color_distiller(palette = "YlOrRd", direction = 1) +ggtitle("Only blooms")
+ggarrange(p,p1,ncol=1)
+
+# Collinearity between temp and ptox
+cor(train_dat$Temperature, train_dat$HAB_ptox2, use = "complete.obs")
+ggplot(data=train_dat)+geom_point(aes(x=HAB_ptox2,y=Temperature))
+# 0.1621026
+
+# Collinearity between chl and ptox
+cor(train_dat$Chlorophyll, train_dat$HAB_ptox2, use = "complete.obs")
+# 0.0146
+
+# Cross validation
+set.seed(123)
+ctrl <- trainControl(method = "cv",number = 5,classProbs = TRUE,summaryFunction = twoClassSummary)
+train_dat$harmful_factor <- factor(ifelse(train_dat$mvi == 1, "yes", "no"))
+train_dat2$harmful_factor <- factor(ifelse(train_dat2$mvi == 1, "yes", "no"))
+
+# Model 1a: 
+model <- glmer(mvi ~ ptox * Chlorophyll + Region * Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat2)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox * Chlorophyll + Region * Chlorophyll + (1 | Month),
+  data = train_dat2,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 2a: 
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat2)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Region * Chlorophyll + (1 | Month),
+  data = train_dat2,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 3a:
+model <- glm(mvi ~ ptox + Chlorophyll,data = train_dat2,family = binomial)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll,
+  data = train_dat2,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 4a: 
+model <- glmer(mvi ~ ptox + Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat2)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll + (1 | Month),
+  data = train_dat2,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 1b: 
+model <- glmer(mvi ~ ptox * Chlorophyll + Region * Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox * Chlorophyll + Region * Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+library(DHARMa)
+sim_res <- simulateResiduals(model)
+plot(sim_res)
+
+# Model 2b: 
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Region * Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+sim_res <- simulateResiduals(model)
+plot(sim_res)
+
+# Model 3b:
+model <- glm(mvi ~ ptox + Chlorophyll,data = train_dat,family = binomial)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll,
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 4b: 
+model <- glmer(mvi ~ ptox + Chlorophyll + (1 | Month), 
+      family = binomial, data = train_dat)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 5b: 
+model <- glmer(mvi ~ ptox + (1 | Month), 
+      family = binomial, data = train_dat)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Model 5a: 
+model <- glmer(mvi ~ ptox + (1 | Month), 
+      family = binomial, data = train_dat2)
+summary(model)
+
+cv_model <- train(harmful_factor ~ ptox + Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+```
+
