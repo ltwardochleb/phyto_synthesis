@@ -1,0 +1,2263 @@
+---
+title:
+  "Global GAM Selection"
+author:
+  "Ryan Hankins"
+output: 
+  html_document:
+        toc: TRUE
+        toc_float: TRUE
+        code_folding: show
+        df_print: paged 
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, tidy = "styler")
+```
+
+
+
+# Prepare Data
+
+```{r, include=FALSE}
+
+library(mgcv)
+library(tidyverse)
+library(marginaleffects)
+library(MuMIn)
+library(car)
+library(corrplot)
+library(stats)
+library(marginaleffects)
+library(mice)
+library(lattice)
+```
+
+
+```{r}
+#options(na.action = "na.exclude")
+
+# variables to include:
+c = c("logchla", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
+       "EXPORT","OUT","lagOUT", "SJR", "lagSJR", "Index","lagIndex","DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity",  "lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step", "logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate")
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+df <- subset(df,df$Date <= "2022-12-31")
+# Changing categorical variables to factors
+df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+
+# log transforming chl-a to achieve normal distribution of response variable.
+df$logchla <- log(df$Chlorophyll)
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+
+# Dropping NAs from the dataset, only for dredging.
+
+ df <- subset(df, select = c) #%>%
+    #drop_na()
+
+# z-score standardizing the dataset for easier comparison of predictors. This facilitates comparison of effect sizes between variables.
+
+df <- df %>% mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+df
+```
+```{r}
+hist(df$DissAmmonia)
+hist(df$DissAmmonia^2)
+# hist(sqrt(df$DissAmmonia))
+hist(df$logDissAmmonia)
+```
+
+# Data exploration  
+
+- outputs can be found in presentations folder, logchla exploration
+
+```{r class.source = 'fold-hide'}
+# hist(df$Chlorophyll)
+# sqrt_chla <- sqrt(df$Chlorophyll)
+# hist(sqrt_chla)
+# df$log_chla <- log(df$Chlorophyll)
+# hist(df$logchla)
+# log10_chla <- log10(df$Chlorophyll)
+# hist(log10_chla)
+# 
+# 
+# log seems to have the best fit.
+# 
+# # biplots
+# 
+# #scatter{r}
+# lapply(c, function(x) {
+#   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_point()+
+#     facet_wrap(~season, ncol=1)+
+#     theme_classic()})
+# # 
+# # # linear regression
+# lapply(c, function(x) {
+#   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color= Regions)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     facet_wrap(~season, ncol=1)+
+#     theme_classic()})
+# # 
+# # 
+# # ggplot(df, mapping =aes(x = Date, y=log_chla, color=Regions))+
+# #   ylab("log(Chlorphyll a)")+
+# #   geom_line()+
+# #   scale_x_date(date_breaks= "10 years")+
+# #   facet_wrap(~season, ncol=1)+
+# #   theme_classic()
+# # 
+# # ggplot(df, mapping =aes(x = Date, y=log_chla))+
+# #   ylab("log(Chlorphyll a)")+
+# #   geom_line()+
+# #   scale_x_date(date_breaks= "10 years")+
+# #   facet_wrap(~season, ncol=1)+
+# #   theme_classic()
+# # 
+# # # linear regression
+# # lapply(c, function(x) {
+# #   ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+# #     ylab("log(Chlorphyll a)")+
+# #     geom_smooth(method="lm", se=FALSE)+
+# #     geom_point()+
+# #     theme_classic()})
+# 
+#Corr plot
+df_numeric = df %>% select(where(is.numeric))
+df_numeric = df_numeric %>% drop_na()
+m = cor(df_numeric)
+# check syntax to remove NAs for individual predictors
+corrplot(m,
+         method = "color",
+         type = "upper",
+         addCoef.col = "black",
+         number.cex = 0.5,
+         tl.cex = 0.7,
+         tl.col = "black",
+         col = colorRampPalette(c("blue", "white", "red"))(200)
+)
+# 
+# #######################################
+# # Min Max normalized data exploration #
+# #######################################
+# 
+# 
+# df_minmax <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.,center=min(.), scale = max(.)-min(.)))))
+# 
+# 
+# # linear regression
+# lapply(c, function(x) {
+#   ggplot(df_minmax, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+#     ylab("log(Chlorphyll a)")+
+#     geom_smooth(method="lm", se=FALSE)+
+#     geom_point()+
+#     theme_classic()})
+# 
+# #######################################
+# # z-score standardized data exploration #
+# #######################################
+# 
+# 
+# df_std <- df %>% mutate(across(!c(Regions,season), ~as.vector(scale(.))))
+# 
+# 
+# # linear regression
+lapply(c, function(x) {
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla, color=season)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+lapply(c, function(x) {
+  ggplot(df, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=TRUE)+
+    geom_point()+
+    theme_classic()})
+# 
+# #############################
+# # Box Plot for Step Change  #
+# #############################
+# 
+# 
+ggplot(df, mapping =aes(x = clam_step, y = logchla)) +
+  ylab("log(Chlorphyll a)")+
+  geom_boxplot()+
+  theme_classic()
+
+```
+
+
+# Model Selection {.tabset}
+
+## Choose Models With Best Combination of flow variables 
+
+```{r}
+#options(na.action = "na.fail") 
+
+# OUT (no EXPORT, no step)
+# m1 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                OUT +
+#                s(Regions, bs='re') +
+#                season +
+#                (OUT*season) +
+#                Grazing_rate +
+#                lagOUT +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML'
+#              )
+# 
+# # # SAC (no EXPORT, no step)
+# m2 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC +
+#                s(Regions, bs='re') +
+#                season +
+#                (SAC*season) +
+#                Grazing_rate +
+#                lagSAC +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML'
+#              )
+```
+
+
+
+```{r}
+
+# # OUT + Step (no EXPORT)
+# m3 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                OUT +
+#                s(Regions, bs='re') +
+#                season +
+#                (OUT*season) +
+#                clam_step +
+#                lagOUT +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML',
+#              na.action = na.exclude)
+# 
+# # SAC + Step (no EXPORT)
+# m4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                s(Regions, bs='re') +
+#                season +
+#                (SAC*season) +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia,
+#               # lagDissNitrateNitrite, # removing based on dredge
+#              data = df,
+#              method = 'ML',
+#              na.action = na.exclude)
+# 
+# # OUT + EXPORT + Step
+# # m5 <- gam((logchla) ~ DissAmmonia +
+# #                DissNitrateNitrite +
+# #                Temperature +
+# #                Conductivity +
+# #                OUT + 
+# #                EXPORT +
+# #                s(Regions, bs='re') +
+# #                season +
+# #                (OUT*season) +
+# #                clam_step +
+# #                lagOUT +
+# #                lagDissAmmonia +
+# #                lagDissNitrateNitrite,
+# #              data = df,
+# #              method = 'ML'
+# #              )
+# 
+# #SAC+ EXPORT + Step (best performing combo)
+# m6 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                season +
+#                # (SAC*season) + # removing based on dredge
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia,
+#                #lagDissNitrateNitrite, # removing based on dredge
+#              data = df,
+#              method = 'ML',
+#              na.action = na.exclude)
+
+# m6 but with Season as a numeric smooth term with bs=cc (cyclic cubic spline)
+# m7 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC +
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                s(season_num, bs='cc', k=4) +
+#                (SAC*season) +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML'
+#              )
+# SJR + OUT + EXPORT
+# m8 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SJR + 
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                s(season_num, bs='cc', k=4) +
+#                (SJR*season) +
+#                clam_step +
+#                lagSJR +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML'
+#              )
+# SJR + OUT (no EXPORT)
+# m9 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SJR + 
+#                s(Regions, bs='re') +
+#                s(season_num, bs='cc', k=4) +
+#                (SJR*season) +
+#                clam_step +
+#                lagSJR +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML'
+#              )
+
+```
+## Compare with AIC
+```{r}
+#AIC(m3, m4,m6)
+```
+
+```{r}
+#BIC(m3, m4, m6)
+```
+
+## Decisions/observations:
+- remove month random effect
+- keep season, try cyclic cubic spline bs="cc", set k=4 (m7)
+  - season cyclic cubic spline removed after seeing it is insignificant in the models
+- add region as a random effect
+- models performed better with clam data as a step function
+
+  
+## Reduce variables in top models: {.tabset}
+Dredging the top models to determine which variables to remove. 
+NOTE: only dredging with the complete cases dataset.
+
+### m1 
+
+```{r}
+# OUT (no EXPORT, no step)
+# df <- subset(df, select = c)%>%
+#    drop_na()
+# options(na.action = "na.fail")
+#m.1.dredge <- dredge(m1)
+#m.1.dredge
+
+```
+
+### m2
+
+```{r}
+# # SAC (no EXPORT, no step)
+# m.2.dredge <- dredge(m2)
+# head(m.2.dredge, 3)
+```
+
+### m.3 - active
+
+```{r}
+# OUT + Step (no EXPORT)
+#m.3.dredge <- dredge(m3)
+# head(m.3.dredge, 3)
+```
+
+
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + Temperature + Conductivity + OUT + s(Regions, bs = "re") +  season + (OUT * season) + clam_step + lagOUT + lagDissAmmonia + lagDissNitrateNitrite, data = df, method = "ML")
+---
+Model selection table 
+       (Int) clm_stp      Cnd      DsA     DNN     lDA      lDN      OUT s(Rgn,"re")
+4032 -0.3008       + -0.06939 -0.03112 0.07865 0.10820 -0.03881 -0.08777           +
+4000 -0.2931       + -0.07331 -0.02951 0.07022 0.10270          -0.08830           +
+3996 -0.2982       + -0.07408          0.06258 0.09478          -0.08383           +
+     ssn    Tmp OUT:ssn df    logLik   AICc delta weight
+4032   + 0.3048       + 19 -1795.546 3631.5  0.00  0.391
+4000   + 0.3031       + 18 -1796.595 3631.6  0.05  0.382
+3996   + 0.3102       + 17 -1798.133 3632.6  1.09  0.227
+Models ranked by AICc(x) 
+
+### m.4 - active
+
+```{r}
+# SAC + Step (no EXPORT)
+# m.4.dredge <- dredge(m4)
+# head(m.4.dredge, 3)
+```
+
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + 
+    Temperature + Conductivity + SAC + s(Regions, bs = "re") + 
+    season + (SAC * season) + clam_step + lagSAC + lagDissAmmonia + lagDissNitrateNitrite, data = df, method = "ML")
+---
+Model selection table 
+       (Int) clm_stp      Cnd      DsA     DNN    lDA      lDN s(Rgn,"re")      SAC
+4000 -0.2851       + -0.07562 -0.03230 0.06620 0.1078                    + -0.05475
+1984 -0.3065       + -0.07300 -0.03363 0.07382 0.1098 -0.04205           + -0.06866
+4032 -0.2917       + -0.07216 -0.03369 0.07389 0.1126 -0.03481           + -0.05380
+     ssn    Tmp SAC:ssn df    logLik   AICc delta weight
+4000   + 0.2971       + 18 -1796.554 3631.5  0.00  0.362
+1984   + 0.2817         16 -1798.675 3631.7  0.17  0.332
+4032   + 0.2988       + 19 -1795.696 3631.8  0.33  0.306
+Models ranked by AICc(x) 
+
+### m5 
+
+```{r}
+# OUT + EXPORT + Step
+#m.5.dredge <- dredge(m5)
+#m.5.dredge
+```
+
+### m.6 -active
+
+```{r}
+
+# SAC+ EXPORT + Step (best performing combo)
+# m.6.dredge <- dredge(m6)
+# head(m.6.dredge, 3)
+```
+
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + 
+    Temperature + Conductivity + SAC + EXPORT + s(Regions, bs = "re") + 
+    season + (SAC * season) + clam_step + lagSAC + lagDissAmmonia + lagDissNitrateNitrite, data = df, method = "ML")
+---
+Model selection table 
+       (Int) clm_stp      Cnd      DsA     DNN      EXP    lDA      lDN     lSA
+4032 -0.2813       + -0.07495 -0.02849 0.07064 -0.04236 0.1118          0.04141
+4096 -0.2891       + -0.07215 -0.02976 0.07762 -0.04208 0.1160 -0.03312 0.03720
+8000 -0.2828       + -0.07825 -0.02835 0.06788 -0.03971 0.1106                 
+     s(Rgn,"re")      SAC ssn    Tmp SAC:ssn df    logLik   AICc delta weight
+4032           + -0.07462   + 0.2805         17 -1795.397 3627.1  0.00  0.398
+4096           + -0.07332   + 0.2824         18 -1794.624 3627.6  0.50  0.310
+8000           + -0.05055   + 0.2955       + 19 -1793.662 3627.8  0.61  0.293
+Models ranked by AICc(x) 
+
+### m7
+
+```{r}
+# m6 but with as a numeric smooth term with bs=cc (cyclic cubic spline)
+# m.7.dredge <- dredge(m7)
+# head(m.7.dredge, 3)
+```
+
+### m8
+
+```{r}
+# SJR+EXPORT+ Step
+# m.8.dredge <- dredge(m8)
+# head(m.7.dredge, 3)
+```
+
+## Compare dredged models with AIC/BIC
+
+```{r}
+# #top.m1 <- get.models(m.1.dredge, 1)[[1]]
+# #top.m2 <- get.models(m.2.dredge, 1)[[1]]
+# top.m3 <- get.models(m.3.dredge, 1)[[1]]
+# top.m4 <- get.models(m.4.dredge, 1)[[1]]
+# #top.m5 <- get.models(m.5.dredge, 1)[[1]]
+# top.m6 <- get.models(m.6.dredge, 1)[[1]]
+#top.m7 <- get.models(m.7.dredge, 1)[[1]]
+#top.m8 <- get.models(m.8.dredge, 1)[[1]]
+```
+compare the top dredged models with AIC and BIC
+```{r}
+# AIC(top.m3, top.m4, top.m6)
+```
+
+```{r}
+# BIC(top.m3, top.m4, top.m6)
+```
+
+## Remove Season {.tabset}
+
+The interaction with Sac:season was not significant in m6 but was in m3 and m4
+```{r}
+# OUT + Step (no EXPORT)
+# m3.no.season <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                OUT +
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagOUT +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML',
+#              na.action = na.exclude)
+# 
+# # SAC + Step (no EXPORT)
+# m4.no.season <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia,
+#               # lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML',
+#              na.action = na.exclude)
+# 
+# #SAC+ EXPORT + Step (best performing combo)
+# m6.no.season <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia,
+#                #lagDissNitrateNitrite,
+#              data = df,
+#              method = 'ML',
+#             na.action = na.exclude )
+
+```
+
+
+### m3 no season = active
+
+```{r}
+# m3.no.season.dredge <- dredge(m3.no.season)
+# head(m3.no.season.dredge, 3)
+```
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + 
+    Temperature + Conductivity + OUT + s(Regions, bs = "re") + 
+    clam_step + lagOUT + lagDissAmmonia + lagDissNitrateNitrite, 
+    data = df, method = "ML")
+---
+Model selection table 
+       (Int) clm_stp     Cnd      DsA     DNN    lDA     lDN     lOU      OUT
+1024 -0.0662       + -0.1052 -0.04578 0.06000 0.1497 0.09286 0.08020 -0.05812
+1016 -0.0630       + -0.1061 -0.03797         0.1462 0.10920 0.07587 -0.06411
+1020 -0.0666       + -0.1081          0.04648 0.1376 0.10250 0.08302 -0.05307
+     s(Rgn,"re")    Tmp df    logLik   AICc delta weight
+1024           + 0.2986 14 -1847.929 3726.1  0.00  0.763
+1016           + 0.2853 13 -1850.386 3729.0  2.88  0.181
+1020           + 0.3087 13 -1851.550 3731.3  5.21  0.056
+Models ranked by AICc(x) 
+
+### m4 no season - active
+
+```{r}
+# m4.no.season.dredge <- dredge(m4.no.season)
+# head(m4.no.season.dredge, 3)
+```
+
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + 
+    Temperature + Conductivity + SAC + s(Regions, bs = "re") + 
+    clam_step + lagSAC + lagDissAmmonia + lagDissNitrateNitrite, 
+    data = df, method = "ML")
+---
+Model selection table 
+        (Int) clm_stp     Cnd      DsA     DNN    lDA     lDN     lSA s(Rgn,"re")
+1024 -0.06646       + -0.1095 -0.05020 0.06015 0.1537 0.09403 0.08867           +
+1016 -0.06300       + -0.1112 -0.04238         0.1503 0.11010 0.08414           +
+1020 -0.06710       + -0.1121          0.04537 0.1402 0.10460 0.08995           +
+          SAC    Tmp df    logLik   AICc delta weight
+1024 -0.07314 0.2914 14 -1846.089 3722.4  0.00  0.788
+1016 -0.07904 0.2780 13 -1848.559 3725.3  2.90  0.185
+1020 -0.06614 0.3034 13 -1850.452 3729.1  6.69  0.028
+Models ranked by AICc(x) 
+
+
+### m6 no season - active
+
+```{r}
+# m6.no.season.dredge <- dredge(m6.no.season)
+# head(m6.no.season.dredge, 3)
+```
+Global model call: gam(formula = (logchla) ~ DissAmmonia + DissNitrateNitrite + 
+    Temperature + Conductivity + SAC + EXPORT + s(Regions, bs = "re") + 
+    clam_step + lagSAC + lagDissAmmonia + lagDissNitrateNitrite, 
+    data = df, method = "ML")
+---
+Model selection table 
+        (Int) clm_stp     Cnd      DsA     DNN      EXP    lDA     lDN     lSA
+2048 -0.06292       + -0.1091 -0.03903 0.07505 -0.07952 0.1537 0.06009 0.09201
+1984 -0.06246       + -0.1069 -0.04251 0.08893 -0.08610 0.1671         0.09169
+2044 -0.06323       + -0.1111          0.06448 -0.08353 0.1433 0.06652 0.09316
+     s(Rgn,"re")      SAC    Tmp df    logLik   AICc delta weight
+2048           + -0.05762 0.3034 15 -1830.625 3693.5  0.00  0.620
+1984           + -0.05493 0.3059 14 -1832.536 3695.3  1.78  0.255
+2044           + -0.05147 0.3133 14 -1833.244 3696.7  3.21  0.125
+Models ranked by AICc(x) 
+
+## Add Dissolved Orthophosphate
+
+```{r}
+# # OUT (no EXPORT)
+# m3.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                OUT +
+#                s(Regions, bs='re') +
+#                season +
+#                (OUT*season) +
+#                clam_step +
+#                lagOUT +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite+
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+# 
+# # SAC  (no EXPORT)
+# m4.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                s(Regions, bs='re') +
+#                season +
+#                (SAC*season) +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia +
+#               # lagDissNitrateNitrite+
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+# 
+# #SAC+ EXPORT
+# m6.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                season +
+#                (SAC*season) +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia +
+#              #  lagDissNitrateNitrite+
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+# # OUT (no EXPORT)
+# m3.no.season.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                OUT +
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagOUT +
+#                lagDissAmmonia +
+#                lagDissNitrateNitrite+
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+# 
+# # SAC + Step (no EXPORT)
+# m4.no.season.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia +
+#              #  lagDissNitrateNitrite+
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+# 
+# #SAC+ EXPORT + Step (best performing combo)
+# m6.no.season.po4 <- gam((logchla) ~ DissAmmonia +
+#                DissNitrateNitrite +
+#                Temperature +
+#                Conductivity +
+#                SAC + 
+#                EXPORT +
+#                s(Regions, bs='re') +
+#                clam_step +
+#                lagSAC +
+#                lagDissAmmonia +
+#              #  lagDissNitrateNitrite +
+#                DissOrthophos +
+#                lagDissOrthophos,
+#              data = df,
+#              method = 'ML'
+#              )
+
+```
+
+## AIC/BIC of models before smoothing predictors
+
+```{r}
+#AIC(m3,m4,m6,m3.no.season,m4.no.season,m6.no.season,m3.po4,m4.po4,m6.po4,m3.no.season.po4,m4.no.season.po4,m6.no.season.po4)
+```
+
+```{r}
+#BIC(m3,m4,m6,m3.no.season,m4.no.season,m6.no.season,m3.po4,m4.po4,m6.po4,m3.no.season.po4,m4.no.season.po4,m6.no.season.po4)
+```
+
+# Shrink top models: {.tabset}
+
+- EDF close to 0 it is effectively removed from the model
+- linear terms have EDF close to 1
+
+## m3
+
+Notes:
+s(OUT) has an EDF close to 0
+
+```{r}
+# OUT + Step (no EXPORT)
+m3.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(OUT) +
+               s(Regions, bs='re') +
+               season +
+               (OUT*season) +
+               clam_step +
+               s(lagOUT) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite),
+             data = df,
+             method = 'ML',
+             select=TRUE,
+             na.action=na.omit)
+gam.check(m3.shrink)
+
+```
+
+## m4
+
+Notes:
+S(SAC) has an EDF close to 0
+raised conductivity k because EDF close to ref.df
+
+```{r}
+# SAC + Step (no EXPORT)
+m4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia),
+               #s(lagDissNitrateNitrite), # removed based on dredge
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m4.shrink)
+```
+
+s(Sac) insignificant
+
+## m6
+```{r}
+
+m6.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+              # s(SAC*season) + #removed based on dredge
+               season +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia),
+              # s(lagDissNitrateNitrite), # removed based on dredge
+             data = df,
+             method = 'ML', 
+              select=TRUE
+             )
+
+
+summary(m6.shrink)
+```
+
+s(SAC) linear
+
+## m3.no.season
+
+```{r}
+m3.no.season.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(OUT) +
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagOUT) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m3.no.season.shrink)
+```
+
+## m4.no.season
+
+
+```{r}
+# SAC + Step (no EXPORT)
+m4.no.season.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia), #+
+              # s(lagDissNitrateNitrite),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m4.no.season.shrink)
+```
+
+## m6.no.season
+
+Notes:
+EDF of s(EXPORT) is close to 1
+
+```{r}
+# SAC + EXPORT 
+m6.no.season.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia),# +
+              # s(lagDissNitrateNitrite),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m6.no.season.shrink)
+```
+
+## m3.po4
+
+```{r}
+# OUT  (no EXPORT)
+m3.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(OUT) +
+               s(Regions, bs='re') +
+               season +
+               (OUT*season) +
+               clam_step +
+               s(lagOUT) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m3.po4.shrink)
+```
+
+## m4.po4
+
+Notes:
+EDF of s(SAC) is close to 0
+
+```{r}
+# SAC (no EXPORT)
+m4.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+              # s(SAC) + 
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia)+
+               s(lagDissNitrateNitrite) +
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m4.po4.shrink)
+```
+
+
+## m6.po4
+
+EDF of s(SAC) is close to 0s
+
+```{r}
+
+m6.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+              # s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+               season +
+               (SAC*season) +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia)+
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML', 
+              select=TRUE
+             )
+
+
+summary(m6.po4.shrink)
+```
+
+## m3.no.season.po4
+
+```{r}
+m3.no.season.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(OUT) +
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagOUT) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m3.no.season.po4.shrink)
+```
+
+## m4.no.season.po4
+
+```{r}
+# SAC + Step (no EXPORT)
+m4.no.season.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia)+
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m4.no.season.po4.shrink)
+```
+
+## m6.no.season.po4
+
+EDF of S(EXPORT) close to 1
+
+```{r}
+
+m6.no.season.po4.shrink <- gam((logchla) ~ s(DissAmmonia) +
+               s(DissNitrateNitrite) +
+               s(Temperature) +
+               s(Conductivity) +
+               s(SAC) + 
+               s(EXPORT) +
+               s(Regions, bs='re') +
+               clam_step +
+               s(lagSAC) +
+               s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+
+               s(lagDissOrthophos),
+             data = df,
+             method = 'ML',
+             select=TRUE)
+summary(m6.no.season.shrink)
+```
+
+# Closer look at models 
+
+## m3 {.tabset}
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity)  +  s(OUT) +  s(Regions, bs='re') + season + (OUT*season) +
+  clam_step + s(lagOUT) +s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+Observations:
+lagDNN x DNN = 0.5
+
+```{r}
+concurvity(m3.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m3.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### VIF
+
+
+```{r}
+
+m.l<- lm(formula = logchla ~ OUT  + clam_step,
+            data=df)
+vif(m.l)
+```
+
+
+### plotted predictions
+
+```{r class.source = 'fold-hide'}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagOUT",
+          "lagDissNitrateNitrite",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_predictions(m3.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagOUT",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_slopes(m3.shrink, variables = x, condition = x)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m3.shrink)
+```
+
+## m4 {.tabset}
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) + s(SAC) + 
+               s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+
+```{r}
+concurvity(m4.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w <- concurvity(m4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### VIF
+
+```{r}
+
+m.l<- lm(formula = logchla ~ SAC + clam_step,
+            data=df)
+vif(m.l)
+```
+
+### plotted predictions
+
+```{r class.source = 'fold-hide'}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_predictions(m4.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_slopes(m4.shrink, variables = x, condition = x)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m4.shrink)
+```
+
+## m6 {.tabset}
+
+m6: SAC + EXPORT
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) + s(SAC) + 
+               s(EXPORT) + s(Regions, bs='re') + season + clam_step + 
+               s(lagSAC) + s(lagDissAmmonia) 
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+observations:
+EXPORT x SAC = 0.45
+
+```{r}
+concurvity(m6.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m6.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### VIF
+
+
+```{r}
+
+m.l<- lm(formula = logchla ~ SAC+ EXPORT + clam_step,
+            data=df)
+vif(m.l)
+```
+
+### plotted predicitons
+
+```{r class.source = 'fold-hide'}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_predictions(m6.shrink, condition = x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+
+lapply(c, function(x) {
+  plot_slopes(m6.shrink, condition = x , variables = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m6.shrink)
+```
+
+## m3.no.season {.tabset}
+
+m3.no.season: OUT, no season or OUT:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity)
+            + s(OUT) + s(Regions, bs='re') + clam_step + s(lagOUT) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m3.no.season.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m3.no.season.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_predictions(m3.no.season.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+
+lapply(c, function(x) {
+  plot_slopes(m3.no.season.shrink, variables = x , condition = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m3.no.season.shrink)
+```
+
+
+## m4.no.season {.tabset}
+
+m4.no.season: SAC, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+              s(Conductivity, k=12) + s(SAC)+s(Regions, bs='re') + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(lagDissNitrateNitrite)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m4.no.season.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<- concurvity(m4.no.season.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_predictions(m4.no.season.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_slopes(m4.no.season.shrink, condition = x , variables=x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m4.no.season.shrink)
+```
+
+
+## m6.no.season {.tabset}
+
+m6.no.season: SAC + EXPORT, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) +  s(Temperature) + s(Conductivity, k=12) +
+               s(SAC) +  s(EXPORT) + s(Regions, bs='re') + clam_step + s(lagSAC) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m6.no.season.shrink)
+```
+
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m6.no.season.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### VIF
+
+
+```{r}
+
+m.l<- lm(formula = logchla ~ SAC+ EXPORT + clam_step,
+            data=df)
+vif(m.l)
+```
+
+### plotted predictions
+
+```{r}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_predictions(m6.no.season.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia")
+
+lapply(c, function(x) {
+  plot_slopes(m6.no.season.shrink, variables = x , condition = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+
+### diagnostics
+
+```{r}
+gam.check(m6.no.season.shrink)
+```
+
+
+## m3.po4 {.tabset}
+
+m3.po4: OUT + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) +s(Temperature) + s(Conductivity) + s(OUT) +
+               s(Regions, bs='re') + season +(OUT*season) + clam_step + s(lagOUT) + s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite) + s(DissOrthophos) + s(lagDissOrthophos)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+Observations:
+lagDNN x DNN = 0.5
+
+```{r}
+concurvity(m3.po4.shrink)
+```
+
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m3.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r class.source = 'fold-hide'}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagOUT",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_predictions(m3.po4.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagOUT",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_slopes(m3.po4.shrink, variables = x, condition = x)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m3.po4.shrink)
+```
+
+## m4.po4 {.tabset}
+
+m4.po4: SAC + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +  s(Conductivity, k=12) +
+              + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) +
+               s(lagDissAmmonia)  + s(DissOrthophos) + s(lagDissOrthophos) +s(lagDissNitrateNitrite)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+
+```{r}
+concurvity(m4.po4.shrink)
+```
+
+```{r}
+w<-concurvity(m4.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### plotted predictions
+
+```{r class.source = 'fold-hide'}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "lagDissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_predictions(m4.po4.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "lagDissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+lapply(c, function(x) {
+  plot_slopes(m4.po4.shrink, variables = x, condition = x)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m4.po4.shrink)
+```
+
+## m6.po4 {.tabset}
+
+m6.po4: SAC + EXPORT + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) +
+               s(SAC) + s(EXPORT) + s(Regions, bs='re') +  season +  clam_step + s(lagSAC) +
+               s(lagDissAmmonia) + s(DissOrthophos)+s(lagDissOrthophos)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+observations:
+EXPORT x SAC = 0.45
+
+```{r}
+concurvity(m6.po4.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m6.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+### plotted predicitons
+
+```{r class.source = 'fold-hide'}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "EXPORT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_predictions(m6.po4.shrink, condition = x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r class.source = 'fold-hide'}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "EXPORT",
+          "season",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos",
+          "lagDissNitrateNitrite")
+
+lapply(c, function(x) {
+  plot_slopes(m6.po4.shrink, condition = x , variables = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m6.po4.shrink)
+```
+
+## m3.no.season.po4 {.tabset}
+
+m3.no.season.po4: OUT + PO4 + lagPO4, no season or OUT:season
+
+- gam((logchla) ~ s(DissAmmonia) +  s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity) + s(OUT) + s(Regions, bs='re') + clam_step +
+               s(lagOUT) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)+ s(DissOrthophos) + s(lagDissOrthophos)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m3.no.season.po4.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<- concurvity(m3.no.season.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_predictions(m3.no.season.po4.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "OUT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_slopes(m3.no.season.po4.shrink, variables = x , condition = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m3.no.season.po4.shrink)
+```
+
+
+## m4.no.season.po4 {.tabset}
+
+m4.no.season.po4: SAC + PO4 + lagPO4, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity, k=12) + s(SAC) +  s(Regions, bs='re') + clam_step + s(lagSAC) +
+               s(lagDissAmmonia) + s(DissOrthophos)+ s(lagDissOrthophos)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m4.no.season.po4.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<- concurvity(m4.no.season.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_predictions(m4.no.season.po4.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_slopes(m4.no.season.po4.shrink, condition = x , variables=x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### diagnostics
+
+```{r}
+gam.check(m4.no.season.po4.shrink)
+```
+
+
+## m6.no.season.po4 {.tabset}
+
+m6.no.season.po4: SAC + EXPORT + PO4 + lagPO4, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity, k=12) + s(SAC) + s(EXPORT) + s(Regions, bs='re') +
+               clam_step + s(lagSAC) + s(lagDissAmmonia) + 
+               s(DissOrthophos)+ s(lagDissOrthophos)
+
+### concurvity
+
+<0.3 - low, >0.5 - some concern, >0.8 - very high
+
+```{r}
+concurvity(m6.no.season.po4.shrink)
+```
+Print predictor combinations with worst-case index of concurvity >0.5
+```{r}
+w<-concurvity(m6.no.season.po4.shrink, full =FALSE)
+wdf<- as.data.frame(w$worst)
+i <- which(wdf > 0.5, arr.ind = TRUE)
+r <- data.frame(
+  Row = rownames(wdf)[i[, 1]],
+  Column = colnames(wdf)[i[, 2]],
+  Value = wdf[i]
+)
+r <- r[r$Row != r$Column, ]
+r
+```
+
+
+### plotted predictions
+
+```{r}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_predictions(m6.no.season.shrink, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+### marginal effects
+
+The marginal effects in this plot can be interpreted as measuring the change in Y that is associated with a small increase in X, for different baseline values of X.
+
+```{r}
+# Plot data with model fit
+c <- c("DissAmmonia",
+          "DissNitrateNitrite",
+          "Temperature",
+          "Conductivity",
+          "SAC",
+          "EXPORT",
+          "Regions", 
+          "clam_step",
+          "lagSAC",
+          "lagDissAmmonia",
+          "lagDissNitrateNitrite",
+          "DissOrthophos",
+          "lagDissOrthophos")
+
+lapply(c, function(x) {
+  plot_slopes(m6.no.season.po4.shrink, variables = x , condition = x) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+
+### diagnostics
+
+```{r}
+gam.check(m6.no.season.po4.shrink)
+```
+
+# Compare all the models with AIC/BIC
+
+As a reminder, here are the models we are working with. Next to the model name I have written the main difference with the other models.
+
+
+m3: OUT
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity)  +  s(OUT) +  s(Regions, bs='re') + season + (OUT*season) +
+  clam_step + s(lagOUT) +s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+m4: SAC
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) + s(SAC) + 
+               s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)
+
+m6: SAC + EXPORT
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) + s(SAC) + 
+               s(EXPORT) + s(Regions, bs='re') + season + clam_step + 
+               s(lagSAC) + s(lagDissAmmonia)
+
+m3.no.season: OUT, no season or OUT:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity)
+            + s(OUT) + s(Regions, bs='re') + clam_step + s(lagOUT) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+m4.no.season: SAC, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+              s(Conductivity, k=12) + s(SAC)+s(Regions, bs='re') + clam_step + s(lagSAC) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)
+
+m6.no.season: SAC + EXPORT, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) +  s(Temperature) + s(Conductivity, k=12) +
+               s(SAC) +  s(EXPORT) + s(Regions, bs='re') + clam_step + s(lagSAC) + s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite)
+               
+m3.po4: OUT + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) +s(Temperature) + s(Conductivity) + s(OUT) +
+               s(Regions, bs='re') + season +(OUT*season) + clam_step + s(lagOUT) + s(lagDissAmmonia) +
+               s(lagDissNitrateNitrite) + s(DissOrthophos) + s(lagDissOrthophos)
+               
+           
+m4.po4: SAC + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +  s(Conductivity, k=12) +
+               s(SAC) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) +
+               s(lagDissAmmonia) + s(lagDissNitrateNitrite) + s(DissOrthophos) + s(lagDissOrthophos)
+
+m6.po4: SAC + EXPORT + PO4 + lagPO4
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) + s(Conductivity, k=12) +
+               s(SAC) + s(EXPORT) + s(Regions, bs='re') +  season +  clam_step + s(lagSAC) +
+               s(lagDissAmmonia)+ s(lagDissNitrateNitrite) + s(DissOrthophos)+s(lagDissOrthophos)
+
+m3.no.season.po4: OUT + PO4 + lagPO4, no season or OUT:season
+
+- gam((logchla) ~ s(DissAmmonia) +  s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity) + s(OUT) + s(Regions, bs='re') + clam_step +
+               s(lagOUT) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)+ s(DissOrthophos) + s(lagDissOrthophos)
+               
+m4.no.season.po4: SAC + PO4 + lagPO4, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity, k=12) + s(SAC) +  s(Regions, bs='re') + clam_step + s(lagSAC) +
+               s(lagDissAmmonia)+ s(lagDissNitrateNitrite) + s(DissOrthophos)+ s(lagDissOrthophos)
+  
+m6.no.season.po4: SAC + EXPORT + PO4 + lagPO4, no season or SAC:season
+
+- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(Temperature) +
+               s(Conductivity, k=12) + s(SAC) + s(EXPORT) + s(Regions, bs='re') +
+               clam_step + s(lagSAC) + s(lagDissAmmonia) + s(lagDissNitrateNitrite)+
+               s(DissOrthophos)+ s(lagDissOrthophos)
+        
+
+## AIC
+
+```{r}
+aic_all<- AIC(m3.shrink,m4.shrink,m6.shrink,m3.no.season.shrink,m4.no.season.shrink,m6.no.season.shrink,m3.po4.shrink,m4.po4.shrink,m6.po4.shrink,m3.no.season.po4.shrink,m4.no.season.po4.shrink,m6.no.season.po4.shrink)
+aic_all
+```
+
+## BIC
+
+```{r}
+bic_all <- BIC(m3.shrink,m4.shrink,m6.shrink,m3.no.season.shrink,m4.no.season.shrink,m6.no.season.shrink,m3.po4.shrink,m4.po4.shrink,m6.po4.shrink,m3.no.season.po4.shrink,m4.no.season.po4.shrink,m6.no.season.po4.shrink)
+bic_all
+```
+
+## Determine top models
+
+This table ranks the models by their AIC and shows the difference in AIC/BIC values of each model from the lowest AIC/BIC of all models. The code is taken from here: https://interagencyecologicalprogram.github.io/ND-FASTR/rtm_chl_models_flow_weekly_avg.html#Purpose 
+
+m6.po4 and m4.po4 look to be performing the best
+
+```{r}
+# AIC values
+aic_all_t <- aic_all %>%
+  as_tibble(rownames = "Model") %>%
+  mutate(Model_Number = 1:12, .before = Model)
+
+# BIC values
+bic_all_t <- bic_all %>%
+  as_tibble(rownames = "Model")
+
+# Combine AIC and BIC and calculate differences from lowest value
+aic_bic_all <-
+  left_join(aic_all_t, bic_all_t, by = join_by(Model, df)) %>%
+  mutate(across(c(AIC, BIC), ~ .x - min(.x), .names = "{.col}_delta")) %>%
+  select(starts_with("Model"), df, starts_with("AIC"), starts_with("BIC"))
+
+# Sort by AIC
+aic_bic_all %>% arrange(AIC)
+
+```
