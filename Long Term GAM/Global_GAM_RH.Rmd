@@ -115,11 +115,14 @@ md.pattern(df)
 ```
 
 ## Separate Dataset Regionally
+
 ```{r}
 #we need to remove the flow variables so we don't have duplicated values for each region
-df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC", "lagOUT","lagSAC")]
+df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
 
 df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
+
+df_Central <- df_no_flow %>% filter(Regions == "Central")
 
 r <- unique(df_no_flow$Regions)
 region_list <- list()
@@ -135,11 +138,13 @@ for (region in r){
 Impute all of the regional datasets 5 times
 
 ```{r include=FALSE}
-# This creates a list of mira objects
+
+# This creates a list of mids objects
 regional_imp <- list()
 for (region_name in as.character(names(region_list))){
   current_df <- region_list[[region_name]]
-  imp <- mice(current_df,seed = 123, print=F)
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
   new_name <- paste0(region_name, "_imp")
   regional_imp[[new_name]]<- imp
 }
@@ -236,13 +241,13 @@ for (region_imp in as.character(names(regional_imp))){
 
 ## Add Lag terms to the imputed datasets
 
-```{r include=FALSE}
+```{r}
 
 df_list_lag <- lapply(regional_imp_dfs, function(y) {
 #Step 1: summarize by season 
 wq_r_sum_lagseason <- y %>%
   group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
 
 #Step 2: Add a column for the following season.
 #This seems counter-intuitive because the lag should be the prior season,
@@ -273,10 +278,6 @@ y <- y %>%
   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
   select(-seasonyear)%>%
   relocate(Date)
-
-# z-score standardizing the dataset for easier comparison of predictors. This facilitates comparison of effect sizes between variables.
-
-y <- y %>% mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 })
 
 ```
@@ -286,31 +287,52 @@ y <- y %>% mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_st
 Now we have to combine the 25 regional datasets into 5 datasets that include all regions.
 
 ```{r}
+### df1
 df1 <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
-             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1))
-df1$Regions <- as.factor(df1$Regions)
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) %>%
+  # z-score as the last step before the GAM
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
+### df2
 df2 <- distinct(rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
-             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))
-df2$Regions <- as.factor(df2$Regions)
+             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))%>%
+ # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df3
 
 df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
-             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))
-df3$Regions <- as.factor(df3$Regions)
+             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
+###df4
 df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
-             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))
-df4$Regions <- as.factor(df4$Regions)
+             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+
+###df5
 
 df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
-             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))
+             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))%>%
+  # z- score
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+# Make regions a factor
+df1$Regions <- as.factor(df1$Regions)
+df2$Regions <- as.factor(df2$Regions)
+df3$Regions <- as.factor(df3$Regions)
+df4$Regions <- as.factor(df4$Regions)
 df5$Regions <- as.factor(df5$Regions)
+
 ```
 
 
 # Fit models with Imputed datasets {.tabset}
 
-## m4.po3
+## m3.po3
 
 ```{r}
 
@@ -663,6 +685,14 @@ lapply(model_list_m3_log, function(mod) {
 })
 ```
 
+### Regions
+
+```{r}
+lapply(model_list_m3_log, function(mod) {
+    plot_predictions(mod, condition = "Regions", points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
 
 ## m4.po4 plotted predictions {.tabset}
 
