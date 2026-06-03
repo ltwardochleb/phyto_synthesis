@@ -517,8 +517,9 @@ plot(df_1.2$Temperature,df_1.2$predicted)
 
 ## Linear interpolation to find where predicted probability crosses 0.50
 ```{r}
-ld50 <- approx(x = df_1.2$predicted, y = df_1.2$Temperature, xout = 0.50)$y
-ld50
+ld10 <- approx(x = df_1.2$predicted, y = df_1.2$Temperature, xout = 0.10)$y
+ld10_nat<-ld10*df1_stats[4,3]+ df1_stats[4,2]
+ld10_nat
 
 ```
 
