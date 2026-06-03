@@ -192,7 +192,7 @@ df_1 <- df_1 %>%
   mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
                            Chlorophyll < bloom_thr ~ 0))
 
-base::paste0("number of blooms: ",toString(sum(df1$bloom))) 
+base::paste0("number of blooms: ",toString(sum(df_1$bloom))) 
 ```
 
 
@@ -484,6 +484,46 @@ https://www.ccohs.ca/oshanswers/chemicals/ld50.html
 have to back calc from z score
 https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values 
 x = std*z + m
+
+## Vary temp and hold others constant
+
+Will probably make this into a function to apply to other variables, but want to test it first!
+```{r}
+df_1.2 <- data.frame(
+  Temperature = seq(min(df1$Temperature), max(df1$Temperature), length.out = 1000),
+  clam_step = as.factor("post clam"),
+  season = as.factor("Summer"),
+  Regions = as.factor("Central")
+  )
+
+df_1.2$Regions = fct_expand(df_1.2$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
+df_1.2$season = fct_expand(df_1.2$season,c("Autumn","Spring","Summer","Winter"))
+df_1.2$clam_step = fct_expand(df_1.2$clam_step,c("post clam","pre clam"))
+
+df_mean <- df1 %>%
+  select(-clam_step,-Temperature) %>%
+  group_by() %>%
+  summarize(across(SAC:laglogEXPORT, ~ median(.x, na.rm = TRUE)))
+
+df_1.2 <- bind_cols(df_1.2,df_mean) 
+```
+
+## Predict on the RESPONSE scale
+```{r}
+
+df_1.2$predicted <- predict(bm4.po4.imp1, newdata = df_1.2, type = "response")
+plot(df_1.2$Temperature,df_1.2$predicted)
+```
+
+## Linear interpolation to find where predicted probability crosses 0.50
+```{r}
+ld50 <- approx(x = df_1.2$predicted, y = df_1.2$Temperature, xout = 0.50)$y
+ld50
+
+```
+
+
+## Old wrong way
 
 ```{r}
 df1_stats <- df_1 %>% 
