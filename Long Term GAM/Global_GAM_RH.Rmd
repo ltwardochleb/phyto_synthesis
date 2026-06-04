@@ -1282,7 +1282,7 @@ all_diagnostics <- sapply(model_list_m6_log, function(x) gam.check(x))
 summary(m6.po4.imp1.log)
 ```
 
-# Remove flow:season interaction {.tabset}
+# Remove flow:season interaction 
 
 We are interested in the effect of removing the flow:season interaction has on the performance of the model. Below, I replicated the top models without the flow:season interaction (denoted by ".nofs"), so we can compare them with our original models farther down. 
 
