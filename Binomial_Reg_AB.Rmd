@@ -11,11 +11,6 @@ output:
 knitr::opts_chunk$set(echo=TRUE)
 ```
 
-# CURRENT QUESTIONS 
-1. When do I shrink now? All imputations? Before imputing? 
-2. Similarly with AIC vs BIC - do I run this check for all imputations? Do I run models on the on the pre-imputed dataset first and use those AIC and BIC values? 
-3. Should I calculate the bloom factor (0 or 1) after imputing so it reflects the imputed chlorophyll? (asked in light of Ryan re-calculating all the lag terms) 
-4. Do I need to do log transformations as well with the binomial GAM or do you want to see results first?
 
 ```{r, include=FALSE}
 
@@ -81,14 +76,22 @@ df$logEXPORT <- log(df$EXPORT)
 ```
 
 ## Separate Dataset Regionally
+May need to separate by flow as well, check from Ryan
 
 ```{r}
+
+df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
+
+df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
+
+r <- unique(df_no_flow$Regions)
 region_list <- list()
-for (region in unique(df$Regions)){
-  df_regional <- df %>% filter(Regions == region)
+for (region in r){
+  df_regional <- df_no_flow %>% filter(Regions == region)
   region <- gsub(" ","",region)
   region_list[[region]] <- df_regional
 }
+
 ```
 
 ## Impute
@@ -97,7 +100,8 @@ for (region in unique(df$Regions)){
 regional_imp <- list()
 for (region_name in as.character(names(region_list))){
   current_df <- region_list[[region_name]]
-  imp <- mice(current_df,seed = 123, print=F)
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
   new_name <- paste0(region_name, "_imp")
   regional_imp[[new_name]]<- imp
 }
@@ -111,6 +115,7 @@ for (region_imp in as.character(names(regional_imp))){
       current_imp <- regional_imp[[region_imp]]
       for (i in action_seq){
         df_new <- complete(current_imp,action = i, include=FALSE)
+        df_new <- left_join( df_new,df_flow, by=c("Date","Regions"))
         new_name <- paste0(region_imp, "_df", i)
         regional_imp_dfs[[new_name]]<- df_new}}
 ```
@@ -119,11 +124,13 @@ for (region_imp in as.character(names(regional_imp))){
 ## Add Lag terms to imputed datasets
 
 ```{r}
+# This code is taken from clamdata_cleanup_AB_261125.R
+
 df_list_lag <- lapply(regional_imp_dfs, function(y) {
 #Step 1: summarize by season 
 wq_r_sum_lagseason <- y %>%
   group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
 
 #Step 2: Add a column for the following season.
 #This seems counter-intuitive because the lag should be the prior season,
@@ -153,26 +160,17 @@ y <- y %>%
   mutate(seasonyear = paste0(season,year(Date))) %>%
   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
   select(-seasonyear)%>%
-  relocate(Date)})
+  relocate(Date)
+})
 ```
 
 
 ## Combine regional imputed datsets
 ```{r}
-df_1 <- rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
-             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)
+### df1 (save natural scale as dataset for later calculations)
+df1_nat <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) 
 
-df_2 <- rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
-             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2)
-
-df_3 <- rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
-             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3)
-
-df_4 <- rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
-             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4)
-
-df_5 <- rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
-             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5)
 ```
 
 
@@ -180,19 +178,19 @@ df_5 <- rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
 
 ```{r}
 #Binary transformation of bloom absence/presence
-bloom_thresholds <- df_1 %>%
+bloom_thresholds <- df1_nat %>%
   group_by(Regions) %>%
   summarise(mean = mean(Chlorophyll,na.rm=T),sd=sd(Chlorophyll,na.rm=T)) %>%
   mutate(bloom_thr = mean + sd) %>%
   select(-mean,-sd)
 
 #Imputation 1 
-df_1 <- df_1 %>%
+df1_nat <- df1_nat %>%
   merge(bloom_thresholds,by="Regions",all.x=T) %>%
   mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
                            Chlorophyll < bloom_thr ~ 0))
 
-base::paste0("number of blooms: ",toString(sum(df_1$bloom))) 
+base::paste0("number of blooms: ",toString(sum(df1_nat$bloom))) 
 ```
 
 
@@ -201,7 +199,7 @@ base::paste0("number of blooms: ",toString(sum(df_1$bloom)))
 ```{r}
 # z-score standardizing the dataset for easier comparison of predictors. This facilitates comparison of effect sizes between variables.
 
-df1 <- df_1 %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+df1 <- df1_nat %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 ```
 
@@ -344,6 +342,7 @@ Included log models.
 ```{r}
 AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log)
 ```
+
 
 ## Compare with BIC
 
@@ -489,67 +488,47 @@ x = std*z + m
 
 Will probably make this into a function to apply to other variables, but want to test it first!
 ```{r}
-df_1.2 <- data.frame(
+df_pred <- data.frame(
   Temperature = seq(min(df1$Temperature), max(df1$Temperature), length.out = 1000),
   clam_step = as.factor("post clam"),
   season = as.factor("Summer"),
   Regions = as.factor("Central")
   )
 
-df_1.2$Regions = fct_expand(df_1.2$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
-df_1.2$season = fct_expand(df_1.2$season,c("Autumn","Spring","Summer","Winter"))
-df_1.2$clam_step = fct_expand(df_1.2$clam_step,c("post clam","pre clam"))
+df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
+df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
+df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
 
 df_mean <- df1 %>%
   select(-clam_step,-Temperature) %>%
   group_by() %>%
-  summarize(across(SAC:laglogEXPORT, ~ median(.x, na.rm = TRUE)))
+  summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE)))
 
-df_1.2 <- bind_cols(df_1.2,df_mean) 
+df_pred <- bind_cols(df_pred,df_mean) 
 ```
 
 ## Predict on the RESPONSE scale
 ```{r}
 
-df_1.2$predicted <- predict(bm4.po4.imp1, newdata = df_1.2, type = "response")
-plot(df_1.2$Temperature,df_1.2$predicted)
+df_pred$predicted <- predict(bm4.po4.imp1, newdata = df_pred, type = "response")
+plot(df_pred$Temperature,df_pred$predicted)
 ```
 
-## Linear interpolation to find where predicted probability crosses 0.50
+## Linear interpolation to find where predicted probability crosses 0.10
 ```{r}
-ld10 <- approx(x = df_1.2$predicted, y = df_1.2$Temperature, xout = 0.10)$y
-ld10_nat<-ld10*df1_stats[4,3]+ df1_stats[4,2]
-ld10_nat
-
-```
-
-
-## Old wrong way
-
-```{r}
-df1_stats <- df_1 %>% 
+df1_stats <- df1_nat %>%
   select(Date,DissAmmonia,DissNitrateNitrite,Temperature,lagDissAmmonia,
          lagDissNitrateNitrite,DissOrthophos,lagDissOrthophos,
          logDissAmmonia,logDissNitrateNitrite,laglogDissAmmonia,
          laglogDissNitrateNitrite,logDissOrthophos,laglogDissOrthophos) %>%
   pivot_longer(cols = !"Date",names_to = "Parameter") %>%
   group_by(Parameter) %>%
-  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T)) 
+  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
 
-#LD50 <- -bm4.po4.imp1$coefficients[1]/bm4.po4.imp1$coefficients["Temperature"] 
-
-# to back calc from z score: x = std*z + m
-LD50_table <- df1_stats %>%
-  mutate(intercept_bm4 = bm4.po4.imp1$coefficients[1]) %>%
-  mutate(coeff_bm4 = bm4.po4.imp1$coefficients[df1_stats$Parameter]) %>%
-  mutate(ld50_bm4_z = -intercept_bm4/coeff_bm4) %>%
-  mutate(ld50_bm4_nat = ld50_bm4_z*sd+mean) #%>%
-  # mutate(intercept_bm4log = bm4.po4.imp1.log$coefficients[1]) %>%
-  # mutate(coeff_bm4log = bm4.po4.imp1.log$coefficients[df1_stats$Parameter])%>%
-  # mutate(ld50_bm4log_z = -intercept_bm4log/coeff_bm4log) %>%
-  # mutate(ld50_bm4log_nat = ld50_bm4log_z*sd+mean)
-
-LD50_table
+ld10 <- approx(x = df_pred$predicted, y = df_pred$Temperature, xout = 0.10)$y
+ld10_nat<-ld10*df1_stats[4,3]+ df1_stats[4,2]
+ld10_nat
 
 ```
+
 

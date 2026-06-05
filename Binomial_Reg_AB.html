@@ -356,8 +356,6 @@ display: none;
 
 <div id="TOC">
 <ul>
-<li><a href="#current-questions" id="toc-current-questions">CURRENT
-QUESTIONS</a></li>
 <li><a href="#prepare-data" id="toc-prepare-data">Prepare data</a>
 <ul>
 <li><a href="#separate-dataset-regionally" id="toc-separate-dataset-regionally">Separate Dataset
@@ -393,24 +391,18 @@ BIC</a></li>
 <li><a href="#bm4.po4-1" id="toc-bm4.po4-1">bm4.po4</a></li>
 <li><a href="#bm6.po4-1" id="toc-bm6.po4-1">bm6.po4</a></li>
 </ul></li>
-<li><a href="#ld50" id="toc-ld50">LD50</a></li>
+<li><a href="#ld50" id="toc-ld50">LD50</a>
+<ul>
+<li><a href="#vary-temp-and-hold-others-constant" id="toc-vary-temp-and-hold-others-constant">Vary temp and hold others
+constant</a></li>
+<li><a href="#predict-on-the-response-scale" id="toc-predict-on-the-response-scale">Predict on the RESPONSE
+scale</a></li>
+<li><a href="#linear-interpolation-to-find-where-predicted-probability-crosses-0.10" id="toc-linear-interpolation-to-find-where-predicted-probability-crosses-0.10">Linear
+interpolation to find where predicted probability crosses 0.10</a></li>
+</ul></li>
 </ul>
 </div>
 
-<div id="current-questions" class="section level1">
-<h1>CURRENT QUESTIONS</h1>
-<ol style="list-style-type: decimal">
-<li>When do I shrink now? All imputations? Before imputing?</li>
-<li>Similarly with AIC vs BIC - do I run this check for all imputations?
-Do I run models on the on the pre-imputed dataset first and use those
-AIC and BIC values?</li>
-<li>Should I calculate the bloom factor (0 or 1) after imputing so it
-reflects the imputed chlorophyll? (asked in light of Ryan re-calculating
-all the lag terms)</li>
-<li>Do I need to do log transformations as well with the binomial GAM or
-do you want to see results first?</li>
-</ol>
-</div>
 <div id="prepare-data" class="section level1">
 <h1>Prepare data</h1>
 <pre class="r"><code># variables to include:
@@ -453,9 +445,15 @@ df$logEXPORT &lt;- log(df$EXPORT)
     #drop_na()</code></pre>
 <div id="separate-dataset-regionally" class="section level2">
 <h2>Separate Dataset Regionally</h2>
-<pre class="r"><code>region_list &lt;- list()
-for (region in unique(df$Regions)){
-  df_regional &lt;- df %&gt;% filter(Regions == region)
+<p>May need to separate by flow as well, check from Ryan</p>
+<pre class="r"><code>df_flow &lt;- df[,c(&quot;Date&quot;,&quot;Regions&quot;,&quot;SAC&quot;, &quot;OUT&quot;,  &quot;EXPORT&quot;, &quot;logEXPORT&quot;,&quot;logOUT&quot;,&quot;lagOUT&quot;,&quot;logSAC&quot;,&quot;lagSAC&quot;)]
+
+df_no_flow &lt;- df[,!(names(df) %in% c(&quot;SAC&quot;, &quot;logSAC&quot;, &quot;OUT&quot;, &quot;logOUT&quot;, &quot;EXPORT&quot;, &quot;logEXPORT&quot;,&quot;lagOUT&quot;, &quot;lagSAC&quot;))]
+
+r &lt;- unique(df_no_flow$Regions)
+region_list &lt;- list()
+for (region in r){
+  df_regional &lt;- df_no_flow %&gt;% filter(Regions == region)
   region &lt;- gsub(&quot; &quot;,&quot;&quot;,region)
   region_list[[region]] &lt;- df_regional
 }</code></pre>
@@ -465,15 +463,16 @@ for (region in unique(df$Regions)){
 <pre class="r"><code>regional_imp &lt;- list()
 for (region_name in as.character(names(region_list))){
   current_df &lt;- region_list[[region_name]]
-  imp &lt;- mice(current_df,seed = 123, print=F)
+  predictors &lt;- quickpred(current_df)
+  imp &lt;- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
   new_name &lt;- paste0(region_name, &quot;_imp&quot;)
   regional_imp[[new_name]]&lt;- imp
 }</code></pre>
-<pre><code>## Warning: Number of logged events: 3
-## Warning: Number of logged events: 3
-## Warning: Number of logged events: 3
-## Warning: Number of logged events: 3
-## Warning: Number of logged events: 3</code></pre>
+<pre><code>## Warning: Number of logged events: 2
+## Warning: Number of logged events: 2
+## Warning: Number of logged events: 2
+## Warning: Number of logged events: 2
+## Warning: Number of logged events: 2</code></pre>
 </div>
 <div id="make-combined-imputed-datasets" class="section level2">
 <h2>Make combined imputed datasets</h2>
@@ -483,16 +482,19 @@ for (region_imp in as.character(names(regional_imp))){
       current_imp &lt;- regional_imp[[region_imp]]
       for (i in action_seq){
         df_new &lt;- complete(current_imp,action = i, include=FALSE)
+        df_new &lt;- left_join( df_new,df_flow, by=c(&quot;Date&quot;,&quot;Regions&quot;))
         new_name &lt;- paste0(region_imp, &quot;_df&quot;, i)
         regional_imp_dfs[[new_name]]&lt;- df_new}}</code></pre>
 </div>
 <div id="add-lag-terms-to-imputed-datasets" class="section level2">
 <h2>Add Lag terms to imputed datasets</h2>
-<pre class="r"><code>df_list_lag &lt;- lapply(regional_imp_dfs, function(y) {
+<pre class="r"><code># This code is taken from clamdata_cleanup_AB_261125.R
+
+df_list_lag &lt;- lapply(regional_imp_dfs, function(y) {
 #Step 1: summarize by season 
 wq_r_sum_lagseason &lt;- y %&gt;%
   group_by(Regions,Year,season) %&gt;%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups=&quot;drop_last&quot;)
 
 #Step 2: Add a column for the following season.
 #This seems counter-intuitive because the lag should be the prior season,
@@ -522,78 +524,38 @@ y &lt;- y %&gt;%
   mutate(seasonyear = paste0(season,year(Date))) %&gt;%
   merge(wq_r_sum_lagseason,by.x=c(&quot;Regions&quot;,&quot;seasonyear&quot;),by.y=c(&quot;Regions&quot;,&quot;lagseasonyear&quot;),all.x=T) %&gt;%
   select(-seasonyear)%&gt;%
-  relocate(Date)})</code></pre>
-<pre><code>## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## `summarise()` has regrouped the output.
-## ℹ Summaries were computed grouped by Regions, Year, and season.
-## ℹ Output is grouped by Regions and Year.
-## ℹ Use `summarise(.groups = &quot;drop_last&quot;)` to silence this message.
-## ℹ Use `summarise(.by = c(Regions, Year, season))` for per-operation grouping
-##   (`?dplyr::dplyr_by`) instead.</code></pre>
+  relocate(Date)
+})</code></pre>
 </div>
 <div id="combine-regional-imputed-datsets" class="section level2">
 <h2>Combine regional imputed datsets</h2>
-<pre class="r"><code>df1 &lt;- rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
-             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)
-
-df2 &lt;- rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
-             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2)
-
-df3 &lt;- rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
-             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3)
-
-df4 &lt;- rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
-             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4)
-
-df5 &lt;- rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
-             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5)</code></pre>
+<pre class="r"><code>### df1 (save natural scale as dataset for later calculations)
+df1_nat &lt;- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) </code></pre>
 </div>
 <div id="add-bloom-threshold-to-imputation-1" class="section level2">
 <h2>Add bloom threshold to imputation 1</h2>
 <pre class="r"><code>#Binary transformation of bloom absence/presence
-bloom_thresholds &lt;- df %&gt;%
+bloom_thresholds &lt;- df1_nat %&gt;%
   group_by(Regions) %&gt;%
   summarise(mean = mean(Chlorophyll,na.rm=T),sd=sd(Chlorophyll,na.rm=T)) %&gt;%
   mutate(bloom_thr = mean + sd) %&gt;%
   select(-mean,-sd)
 
 #Imputation 1 
-df1 &lt;- df1 %&gt;%
+df1_nat &lt;- df1_nat %&gt;%
   merge(bloom_thresholds,by=&quot;Regions&quot;,all.x=T) %&gt;%
   mutate(bloom = case_when(Chlorophyll &gt; bloom_thr ~ 1,
                            Chlorophyll &lt; bloom_thr ~ 0))
 
-base::paste0(&quot;number of blooms: &quot;,toString(sum(df1$bloom))) </code></pre>
-<pre><code>## [1] &quot;number of blooms: 255&quot;</code></pre>
+base::paste0(&quot;number of blooms: &quot;,toString(sum(df1_nat$bloom))) </code></pre>
+<pre><code>## [1] &quot;number of blooms: 256&quot;</code></pre>
 </div>
 <div id="z-score" class="section level2">
 <h2>Z-score</h2>
 <pre class="r"><code># z-score standardizing the dataset for easier comparison of predictors. This facilitates comparison of effect sizes between variables.
 
-df1 &lt;- df1 %&gt;% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))</code></pre>
+df1 &lt;- df1_nat %&gt;% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))</code></pre>
 </div>
 </div>
 <div id="fit-models-with-imputed-datasets" class="section level1">
@@ -714,23 +676,23 @@ GAM: Models 4 and 6 with PO4.</p>
 <h2>Compare with AIC</h2>
 <pre class="r"><code>AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log)</code></pre>
 <pre><code>##                        df      AIC
-## bm3.po4.imp1     18.12338 1497.060
-## bm4.po4.imp1     18.42347 1492.961
-## bm6.po4.imp1     19.08096 1492.575
-## bm3.po4.imp1.log 22.81862 1456.939
-## bm4.po4.imp1.log 21.78212 1460.586
-## bm6.po4.imp1.log 22.78791 1459.479</code></pre>
+## bm3.po4.imp1     18.23053 1484.715
+## bm4.po4.imp1     18.39688 1480.381
+## bm6.po4.imp1     19.09394 1479.370
+## bm3.po4.imp1.log 22.81541 1452.088
+## bm4.po4.imp1.log 21.78771 1453.084
+## bm6.po4.imp1.log 22.79569 1451.335</code></pre>
 </div>
 <div id="compare-with-bic" class="section level2">
 <h2>Compare with BIC</h2>
 <pre class="r"><code>BIC(bm3.po4.imp1, bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log)</code></pre>
 <pre><code>##                        df      BIC
-## bm3.po4.imp1     18.12338 1603.837
-## bm4.po4.imp1     18.42347 1601.506
-## bm6.po4.imp1     19.08096 1604.995
-## bm3.po4.imp1.log 22.81862 1591.251
-## bm4.po4.imp1.log 21.78212 1588.797
-## bm6.po4.imp1.log 22.78791 1593.611</code></pre>
+## bm3.po4.imp1     18.23053 1591.877
+## bm4.po4.imp1     18.39688 1588.521
+## bm6.po4.imp1     19.09394 1591.607
+## bm3.po4.imp1.log 22.81541 1586.070
+## bm4.po4.imp1.log 21.78771 1581.031
+## bm6.po4.imp1.log 22.79569 1585.202</code></pre>
 </div>
 </div>
 <div id="shrink-models" class="section level1">
@@ -764,37 +726,37 @@ summary(bm3.po4.imp1.shrink)</code></pre>
 ##     s(lagDissAmmonia) + s(DissOrthophos) + s(lagDissOrthophos)
 ## 
 ## Parametric coefficients:
-##                    Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)       -3.554164   0.594685  -5.977 2.28e-09 ***
-## seasonSpring       0.163254   0.389356   0.419  0.67500    
-## seasonSummer      -0.002314   0.571698  -0.004  0.99677    
-## seasonWinter       0.386788   0.424458   0.911  0.36216    
-## OUT                4.042738   1.405125   2.877  0.00401 ** 
-## clam_steppre clam  1.449069   0.186351   7.776 7.48e-15 ***
-## seasonSpring:OUT  -0.408880   0.474497  -0.862  0.38885    
-## seasonSummer:OUT  -0.176746   1.038024  -0.170  0.86480    
-## seasonWinter:OUT  -0.847115   0.493631  -1.716  0.08615 .  
+##                   Estimate Std. Error z value Pr(&gt;|z|)    
+## (Intercept)       -3.49856    0.92548  -3.780 0.000157 ***
+## seasonSpring       0.14210    0.39438   0.360 0.718613    
+## seasonSummer       0.05395    0.58015   0.093 0.925906    
+## seasonWinter       0.23913    0.41402   0.578 0.563552    
+## OUT                4.00650    1.35521   2.956 0.003113 ** 
+## clam_steppre clam  1.48179    0.18661   7.940 2.02e-15 ***
+## seasonSpring:OUT  -0.03180    0.46311  -0.069 0.945256    
+## seasonSummer:OUT   0.47165    1.06060   0.445 0.656535    
+## seasonWinter:OUT  -0.68499    0.49684  -1.379 0.167986    
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
-##                             edf Ref.df  Chi.sq  p-value    
-## s(DissAmmonia)           5.3273      9  46.775  &lt; 2e-16 ***
-## s(DissNitrateNitrite)    2.7662      9  13.564 0.004692 ** 
-## s(lagDissNitrateNitrite) 7.1110      9  42.589 2.71e-06 ***
-## s(Temperature)           5.8586      9  56.203  &lt; 2e-16 ***
-## s(Conductivity)          7.3787      9 178.301 0.010944 *  
-## s(Regions)               3.6410      4  13.098 0.005186 ** 
-## s(OUT)                   5.6187      8  31.747  &lt; 2e-16 ***
-## s(lagOUT)                4.9577      9   9.152 0.081022 .  
-## s(lagDissAmmonia)        1.0000      9  20.823 1.15e-05 ***
-## s(DissOrthophos)         0.3547      9   0.507 0.226183    
-## s(lagDissOrthophos)      8.5663      9  27.797 0.000673 ***
+##                                edf Ref.df  Chi.sq  p-value    
+## s(DissAmmonia)           4.6832721      9  37.847 5.64e-07 ***
+## s(DissNitrateNitrite)    2.9233178      9  14.376 0.004247 ** 
+## s(lagDissNitrateNitrite) 7.4754930      9  51.306  &lt; 2e-16 ***
+## s(Temperature)           5.0764240      9  51.685  &lt; 2e-16 ***
+## s(Conductivity)          7.6248887      9 246.270 0.015565 *  
+## s(Regions)               3.8657382      4  21.054 0.000169 ***
+## s(OUT)                   5.8614472      8  37.265  &lt; 2e-16 ***
+## s(lagOUT)                4.4201349      9   6.775 0.158915    
+## s(lagDissAmmonia)        0.9950217      9  12.884 0.000548 ***
+## s(DissOrthophos)         0.0001456      9   0.000 0.518333    
+## s(lagDissOrthophos)      6.6004482      9  14.610 0.027934 *  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =  0.206   Deviance explained = 26.7%
-## UBRE = -0.49282  Scale est. = 1         n = 2675</code></pre>
+## R-sq.(adj) =  0.184   Deviance explained = 25.2%
+## UBRE = -0.48284  Scale est. = 1         n = 2639</code></pre>
 <p>log transformed</p>
 <pre class="r"><code>bm3.po4.imp1.log.shrink &lt;- gam(bloom ~ s(logDissAmmonia) + 
                              s(logDissNitrateNitrite) + 
@@ -824,36 +786,36 @@ summary(bm3.po4.imp1.log.shrink)</code></pre>
 ## 
 ## Parametric coefficients:
 ##                   Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)       -3.36041    0.69905  -4.807 1.53e-06 ***
-## seasonSpring       0.14977    0.43194   0.347   0.7288    
-## seasonSummer      -0.07762    0.58962  -0.132   0.8953    
-## seasonWinter       0.18525    0.41738   0.444   0.6572    
-## OUT                0.98802    0.64238   1.538   0.1240    
-## clam_steppre clam  1.46203    0.19419   7.529 5.12e-14 ***
-## seasonSpring:OUT  -0.67439    0.45070  -1.496   0.1346    
-## seasonSummer:OUT  -0.03829    1.03828  -0.037   0.9706    
-## seasonWinter:OUT  -0.85471    0.44742  -1.910   0.0561 .  
+## (Intercept)       -3.40316    1.53218  -2.221   0.0263 *  
+## seasonSpring       0.29973    0.41235   0.727   0.4673    
+## seasonSummer       0.10662    0.58945   0.181   0.8565    
+## seasonWinter       0.04521    0.40937   0.110   0.9121    
+## OUT                1.20759    0.64847   1.862   0.0626 .  
+## clam_steppre clam  1.64438    0.19901   8.263   &lt;2e-16 ***
+## seasonSpring:OUT  -0.19908    0.44970  -0.443   0.6580    
+## seasonSummer:OUT   0.29858    1.05633   0.283   0.7774    
+## seasonWinter:OUT  -0.75030    0.46649  -1.608   0.1077    
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
 ##                                edf Ref.df  Chi.sq  p-value    
-## s(logDissAmmonia)           4.8562      9  35.266  &lt; 2e-16 ***
-## s(logDissNitrateNitrite)    6.5350      9  27.717 0.000284 ***
-## s(laglogDissNitrateNitrite) 7.5091      9  33.196 0.000204 ***
-## s(Temperature)              5.4316      9  52.220  &lt; 2e-16 ***
-## s(logConductivity)          4.5548      9 316.968 0.000204 ***
-## s(Regions)                  3.7343      4  13.187 0.005246 ** 
-## s(logOUT)                   4.9743      9  28.663  2.5e-06 ***
-## s(laglogOUT)                0.7796      9   2.003 0.110887    
-## s(laglogDissAmmonia)        1.7421      9  13.372 0.000502 ***
-## s(logDissOrthophos)         0.9807      9   2.988 0.048207 *  
-## s(laglogDissOrthophos)      8.6030      9  31.239 0.000156 ***
+## s(logDissAmmonia)           4.9819      9  30.474 6.73e-06 ***
+## s(logDissNitrateNitrite)    6.3512      9  17.508 0.012845 *  
+## s(laglogDissNitrateNitrite) 7.8222      9  45.635 3.33e-06 ***
+## s(Temperature)              4.6354      9  42.495  &lt; 2e-16 ***
+## s(logConductivity)          4.7206      9 343.428 0.000441 ***
+## s(Regions)                  3.9492      4  20.574 0.000214 ***
+## s(logOUT)                   4.4826      9  34.698  &lt; 2e-16 ***
+## s(laglogOUT)                0.3389      9   0.447 0.246399    
+## s(laglogDissAmmonia)        1.6978      9   6.719 0.016807 *  
+## s(logDissOrthophos)         3.5584      9  10.520 0.014269 *  
+## s(laglogDissOrthophos)      8.6080      9  25.012 0.001946 ** 
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =  0.228   Deviance explained = 28.5%
-## UBRE = -0.50428  Scale est. = 1         n = 2660</code></pre>
+## R-sq.(adj) =  0.219   Deviance explained =   28%
+## UBRE = -0.4975  Scale est. = 1         n = 2624</code></pre>
 </div>
 <div id="bm4.po4-1" class="section level2">
 <h2>bm4.po4</h2>
@@ -885,36 +847,36 @@ summary(bm4.po4.imp1.shrink)</code></pre>
 ## 
 ## Parametric coefficients:
 ##                   Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)        -3.7415     0.6051  -6.183 6.29e-10 ***
-## seasonSpring        0.3870     0.3944   0.981   0.3264    
-## seasonSummer        0.3170     0.4562   0.695   0.4871    
-## seasonWinter        0.8455     0.4184   2.021   0.0433 *  
-## SAC                 1.7792     0.9510   1.871   0.0614 .  
-## clam_steppre clam   1.4249     0.1862   7.652 1.97e-14 ***
-## seasonSpring:SAC   -0.6423     0.3798  -1.691   0.0909 .  
-## seasonSummer:SAC    0.3426     0.6982   0.491   0.6236    
-## seasonWinter:SAC   -0.8366     0.3686  -2.270   0.0232 *  
+## (Intercept)        -3.7302     0.7068  -5.277 1.31e-07 ***
+## seasonSpring        0.4480     0.3964   1.130   0.2585    
+## seasonSummer        0.2465     0.4568   0.540   0.5894    
+## seasonWinter        0.7373     0.4099   1.798   0.0721 .  
+## SAC                 1.8566     0.9813   1.892   0.0585 .  
+## clam_steppre clam   1.4698     0.1896   7.754 8.93e-15 ***
+## seasonSpring:SAC   -0.4150     0.3786  -1.096   0.2730    
+## seasonSummer:SAC    0.6684     0.7175   0.932   0.3516    
+## seasonWinter:SAC   -0.7352     0.3681  -1.997   0.0458 *  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
-##                             edf Ref.df  Chi.sq  p-value    
-## s(DissAmmonia)           5.6966      9  51.355  &lt; 2e-16 ***
-## s(DissNitrateNitrite)    1.0002      9  14.211 0.001004 ** 
-## s(Temperature)           5.9787      9  50.939  &lt; 2e-16 ***
-## s(Conductivity)          7.3932      9 148.814 0.017751 *  
-## s(SAC)                   2.9669      8  11.070 0.005025 ** 
-## s(Regions)               3.6653      4  17.812 0.000534 ***
-## s(lagSAC)                6.1232      9  19.236 0.002519 ** 
-## s(lagDissAmmonia)        1.8635      9  17.817 3.06e-05 ***
-## s(lagDissNitrateNitrite) 7.3054      9  50.247 1.42e-05 ***
-## s(DissOrthophos)         0.4414      9   0.705 0.195049    
-## s(lagDissOrthophos)      8.6888      9  29.986 0.000311 ***
+##                                edf Ref.df Chi.sq  p-value    
+## s(DissAmmonia)           5.0117750      9  39.44 2.12e-07 ***
+## s(DissNitrateNitrite)    2.4958781      9  17.04 0.000952 ***
+## s(Temperature)           5.2543385      9  43.12  &lt; 2e-16 ***
+## s(Conductivity)          7.6533012      9 151.23 0.031845 *  
+## s(SAC)                   3.1275100      8  13.94 0.001271 ** 
+## s(Regions)               3.7524407      4  21.51 9.65e-05 ***
+## s(lagSAC)                7.0220484      9  19.22 0.005078 ** 
+## s(lagDissAmmonia)        1.7338780      9  13.10 0.000328 ***
+## s(lagDissNitrateNitrite) 7.3565968      9  57.23  &lt; 2e-16 ***
+## s(DissOrthophos)         0.0004973      9   0.00 0.559965    
+## s(lagDissOrthophos)      8.4769721      9  20.52 0.010783 *  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =    0.2   Deviance explained = 26.2%
-## UBRE = -0.49066  Scale est. = 1         n = 2675</code></pre>
+## R-sq.(adj) =  0.182   Deviance explained = 25.1%
+## UBRE = -0.48048  Scale est. = 1         n = 2639</code></pre>
 <p>log transformed</p>
 <pre class="r"><code>bm4.po4.imp1.log.shrink &lt;- gam(bloom ~ s(logDissAmmonia) +
                s(logDissNitrateNitrite) +
@@ -944,36 +906,36 @@ summary(bm4.po4.imp1.log.shrink)</code></pre>
 ## 
 ## Parametric coefficients:
 ##                   Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)        -3.5151     0.6430  -5.467 4.58e-08 ***
-## seasonSpring        0.2872     0.4207   0.683   0.4948    
-## seasonSummer        0.1342     0.4984   0.269   0.7877    
-## seasonWinter        0.6607     0.4267   1.548   0.1215    
-## SAC                 0.2869     0.9178   0.313   0.7546    
-## clam_steppre clam   1.4180     0.1958   7.243 4.39e-13 ***
-## seasonSpring:SAC   -0.8183     0.3897  -2.100   0.0357 *  
-## seasonSummer:SAC    0.2719     0.7650   0.355   0.7223    
-## seasonWinter:SAC   -0.8547     0.3836  -2.228   0.0259 *  
+## (Intercept)        -3.4936     2.2066  -1.583   0.1134    
+## seasonSpring        0.2991     0.4244   0.705   0.4810    
+## seasonSummer        0.1927     0.5008   0.385   0.7004    
+## seasonWinter        0.4752     0.4205   1.130   0.2584    
+## SAC                 0.8153     0.9174   0.889   0.3742    
+## clam_steppre clam   1.5575     0.2018   7.718 1.19e-14 ***
+## seasonSpring:SAC   -0.4854     0.3825  -1.269   0.2044    
+## seasonSummer:SAC    0.5164     0.7731   0.668   0.5041    
+## seasonWinter:SAC   -0.7519     0.3801  -1.978   0.0479 *  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
-##                                edf Ref.df  Chi.sq  p-value    
-## s(logDissAmmonia)           5.0611      9  38.651  &lt; 2e-16 ***
-## s(logDissNitrateNitrite)    5.1282      9  27.702 8.71e-05 ***
-## s(Temperature)              5.7685      9  48.534  &lt; 2e-16 ***
-## s(logConductivity)          4.3169      9 227.303 0.000579 ***
-## s(logSAC)                   5.5061      9  14.619 0.010400 *  
-## s(Regions)                  3.6788      4  12.055 0.008199 ** 
-## s(laglogSAC)                4.3501      9  16.937 0.001265 ** 
-## s(laglogDissAmmonia)        2.1728      9  14.835 0.000539 ***
-## s(laglogDissNitrateNitrite) 7.5870      9  33.548 0.000154 ***
-## s(logDissOrthophos)         0.7186      9   2.329 0.075275 .  
-## s(laglogDissOrthophos)      8.6147      9  34.378 3.96e-05 ***
+##                               edf Ref.df  Chi.sq  p-value    
+## s(logDissAmmonia)           4.804      9  33.636  &lt; 2e-16 ***
+## s(logDissNitrateNitrite)    5.699      9  19.690 0.003613 ** 
+## s(Temperature)              5.048      9  36.453 1.63e-06 ***
+## s(logConductivity)          4.241      9 231.723 0.001598 ** 
+## s(logSAC)                   5.190      9  18.053 0.001551 ** 
+## s(Regions)                  3.975      4  19.173 0.000450 ***
+## s(laglogSAC)                5.368      9  20.832 0.000557 ***
+## s(laglogDissAmmonia)        2.462      9  10.081 0.009219 ** 
+## s(laglogDissNitrateNitrite) 7.911      9  47.615 5.64e-07 ***
+## s(logDissOrthophos)         3.551      9   8.922 0.031137 *  
+## s(laglogDissOrthophos)      8.541      9  28.673 0.000426 ***
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =   0.23   Deviance explained = 28.6%
-## UBRE = -0.50244  Scale est. = 1         n = 2660</code></pre>
+## R-sq.(adj) =  0.226   Deviance explained = 28.5%
+## UBRE = -0.49657  Scale est. = 1         n = 2624</code></pre>
 </div>
 <div id="bm6.po4-1" class="section level2">
 <h2>bm6.po4</h2>
@@ -1006,37 +968,37 @@ summary(bm6.po4.imp1.shrink)</code></pre>
 ## 
 ## Parametric coefficients:
 ##                   Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)        -3.6167     0.5794  -6.242 4.31e-10 ***
-## seasonSpring        0.1610     0.3975   0.405   0.6855    
-## seasonSummer        0.3813     0.4591   0.831   0.4062    
-## seasonWinter        0.6487     0.4165   1.557   0.1194    
-## SAC                 2.1139     1.0419   2.029   0.0425 *  
-## clam_steppre clam   1.2941     0.1915   6.758 1.40e-11 ***
-## seasonSpring:SAC   -0.6035     0.3738  -1.614   0.1064    
-## seasonSummer:SAC    0.5618     0.6610   0.850   0.3954    
-## seasonWinter:SAC   -0.7226     0.3660  -1.974   0.0484 *  
+## (Intercept)        -3.7017     0.7286  -5.081 3.76e-07 ***
+## seasonSpring        0.2491     0.4050   0.615   0.5385    
+## seasonSummer        0.4654     0.4683   0.994   0.3203    
+## seasonWinter        0.6333     0.4139   1.530   0.1260    
+## SAC                 2.2397     1.1273   1.987   0.0470 *  
+## clam_steppre clam   1.3630     0.2015   6.765 1.33e-11 ***
+## seasonSpring:SAC   -0.3364     0.3875  -0.868   0.3853    
+## seasonSummer:SAC    0.8859     0.7134   1.242   0.2143    
+## seasonWinter:SAC   -0.6589     0.3737  -1.763   0.0779 .  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
-##                              edf Ref.df  Chi.sq  p-value    
-## s(DissAmmonia)           5.44228      9  44.750  &lt; 2e-16 ***
-## s(DissNitrateNitrite)    2.73192      9  14.894 0.002651 ** 
-## s(Temperature)           5.96822      9  50.357  &lt; 2e-16 ***
-## s(Conductivity)          7.26738      9 182.724 0.009228 ** 
-## s(SAC)                   3.32943      8  16.544 0.000362 ***
-## s(EXPORT)                1.62647      9   9.723 0.002026 ** 
-## s(Regions)               3.61767      4  14.243 0.002782 ** 
-## s(lagSAC)                2.28233      9  11.176 0.002778 ** 
-## s(lagDissAmmonia)        2.03878      9  20.554 1.21e-05 ***
-## s(lagDissNitrateNitrite) 7.28677      9  44.492  &lt; 2e-16 ***
-## s(DissOrthophos)         0.03184      9   0.038 0.270796    
-## s(lagDissOrthophos)      8.67653      9  29.918 0.000354 ***
+##                               edf Ref.df Chi.sq  p-value    
+## s(DissAmmonia)           4.694930      9  34.73 2.09e-06 ***
+## s(DissNitrateNitrite)    2.627679      9  15.91 0.001580 ** 
+## s(Temperature)           5.197795      9  42.80  &lt; 2e-16 ***
+## s(Conductivity)          7.591544      9 198.19 0.017523 *  
+## s(SAC)                   3.608429      8  19.47 0.000111 ***
+## s(EXPORT)                2.050394      9  14.78 0.000155 ***
+## s(Regions)               3.763885      4  21.20 0.000116 ***
+## s(lagSAC)                6.564929      9  17.93 0.006200 ** 
+## s(lagDissAmmonia)        1.771328      9  13.57 0.000286 ***
+## s(lagDissNitrateNitrite) 7.409253      9  58.28  &lt; 2e-16 ***
+## s(DissOrthophos)         0.000136      9   0.00 0.590464    
+## s(lagDissOrthophos)      8.449946      9  21.01 0.008851 ** 
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =  0.204   Deviance explained = 26.5%
-## UBRE = -0.49312  Scale est. = 1         n = 2675</code></pre>
+## R-sq.(adj) =  0.193   Deviance explained = 26.1%
+## UBRE = -0.48561  Scale est. = 1         n = 2639</code></pre>
 <p>log transformed</p>
 <pre class="r"><code>bm6.po4.imp1.log.shrink &lt;- gam(bloom ~ s(logDissAmmonia) +
                s(logDissNitrateNitrite) +
@@ -1068,53 +1030,90 @@ summary(bm6.po4.imp1.log.shrink)</code></pre>
 ## 
 ## Parametric coefficients:
 ##                   Estimate Std. Error z value Pr(&gt;|z|)    
-## (Intercept)       -3.52635    0.80487  -4.381 1.18e-05 ***
-## seasonSpring       0.14800    0.42290   0.350   0.7264    
-## seasonSummer       0.29481    0.50074   0.589   0.5560    
-## seasonWinter       0.55252    0.42597   1.297   0.1946    
-## SAC                0.03423    0.92366   0.037   0.9704    
-## clam_steppre clam  1.35602    0.21225   6.389 1.67e-10 ***
-## seasonSpring:SAC  -0.60551    0.38389  -1.577   0.1147    
-## seasonSummer:SAC   0.66582    0.72125   0.923   0.3559    
-## seasonWinter:SAC  -0.70611    0.38324  -1.842   0.0654 .  
+## (Intercept)       -3.53851    6.30510  -0.561   0.5747    
+## seasonSpring       0.09507    0.43990   0.216   0.8289    
+## seasonSummer       0.43323    0.51179   0.847   0.3973    
+## seasonWinter       0.42409    0.42681   0.994   0.3204    
+## SAC                0.64312    0.95108   0.676   0.4989    
+## clam_steppre clam  1.48187    0.21986   6.740 1.58e-11 ***
+## seasonSpring:SAC  -0.29959    0.38967  -0.769   0.4420    
+## seasonSummer:SAC   0.82024    0.76510   1.072   0.2837    
+## seasonWinter:SAC  -0.63454    0.38261  -1.658   0.0972 .  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
 ## Approximate significance of smooth terms:
 ##                               edf Ref.df  Chi.sq  p-value    
-## s(logDissAmmonia)           4.676      9  34.952 1.95e-06 ***
-## s(logDissNitrateNitrite)    5.164      9  27.541 7.82e-05 ***
-## s(Temperature)              5.976      9  50.381  &lt; 2e-16 ***
-## s(logConductivity)          4.487      9 329.739 0.000181 ***
-## s(logSAC)                   5.540      9  20.593 0.000578 ***
-## s(logEXPORT)                5.287      9  22.336 0.000191 ***
-## s(Regions)                  3.802      4  13.071 0.005971 ** 
-## s(laglogSAC)                1.656      9   8.772 0.002573 ** 
-## s(laglogDissAmmonia)        2.079      9  13.809 0.000795 ***
-## s(laglogDissNitrateNitrite) 7.606      9  31.436 0.000321 ***
-## s(logDissOrthophos)         0.759      9   1.575 0.119120    
-## s(laglogDissOrthophos)      8.587      9  32.761 7.70e-05 ***
+## s(logDissAmmonia)           4.535      9  29.230 5.63e-06 ***
+## s(logDissNitrateNitrite)    5.508      9  17.478 0.006592 ** 
+## s(Temperature)              5.107      9  38.659  &lt; 2e-16 ***
+## s(logConductivity)          4.376      9 347.263 0.000329 ***
+## s(logSAC)                   5.405      9  25.860 3.38e-05 ***
+## s(logEXPORT)                5.357      9  25.709 3.69e-05 ***
+## s(Regions)                  3.997      4  20.971 0.000184 ***
+## s(laglogSAC)                5.199      9  16.773 0.002971 ** 
+## s(laglogDissAmmonia)        1.879      9   7.976 0.010616 *  
+## s(laglogDissNitrateNitrite) 7.933      9  46.061 3.09e-06 ***
+## s(logDissOrthophos)         3.567      9   9.884 0.019232 *  
+## s(laglogDissOrthophos)      8.208      9  26.225 0.000790 ***
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
 ## 
-## R-sq.(adj) =  0.242   Deviance explained = 29.9%
-## UBRE = -0.50841  Scale est. = 1         n = 2660</code></pre>
+## R-sq.(adj) =  0.241   Deviance explained = 30.2%
+## UBRE = -0.50394  Scale est. = 1         n = 2624</code></pre>
 </div>
 </div>
 <div id="ld50" class="section level1">
 <h1>LD50</h1>
 <p><a href="https://www.ccohs.ca/oshanswers/chemicals/ld50.html" class="uri">https://www.ccohs.ca/oshanswers/chemicals/ld50.html</a></p>
-<p>It’s giving me odd numbers, I think possibly because of the z-score
-normalizing.Not sure how to interpret.</p>
-<p>Also again wondering at what point I do this in the imputation
-process? tried with imputation 1 temperature just to test.</p>
-<pre class="r"><code>LD50 &lt;- -bm4.po4.imp1$coefficients[1]/bm4.po4.imp1$coefficients[4] 
-LD75 &lt;- (log(.75/(1-.75))-bm4.po4.imp1$coefficients[1])/bm4.po4.imp1$coefficients[4]
-LD99 &lt;- (log(.99/(1-.99))-bm4.po4.imp1$coefficients[1])/bm4.po4.imp1$coefficients[4]
+<p>have to back calc from z score <a href="https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values" class="uri">https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values</a>
+x = std*z + m</p>
+<div id="vary-temp-and-hold-others-constant" class="section level2">
+<h2>Vary temp and hold others constant</h2>
+<p>Will probably make this into a function to apply to other variables,
+but want to test it first!</p>
+<pre class="r"><code>df_pred &lt;- data.frame(
+  Temperature = seq(min(df1$Temperature), max(df1$Temperature), length.out = 1000),
+  clam_step = as.factor(&quot;post clam&quot;),
+  season = as.factor(&quot;Summer&quot;),
+  Regions = as.factor(&quot;Central&quot;)
+  )
 
-LD50</code></pre>
-<pre><code>## (Intercept) 
-##    4.767302</code></pre>
+df_pred$Regions = fct_expand(df_pred$Regions,c(&quot;Central&quot;,&quot;Confluence&quot;,&quot;North Delta&quot;, &quot;South&quot;, &quot;Suisun Bay&quot;))
+df_pred$season = fct_expand(df_pred$season,c(&quot;Autumn&quot;,&quot;Spring&quot;,&quot;Summer&quot;,&quot;Winter&quot;))
+df_pred$clam_step = fct_expand(df_pred$clam_step,c(&quot;post clam&quot;,&quot;pre clam&quot;))
+
+df_mean &lt;- df1 %&gt;%
+  select(-clam_step,-Temperature) %&gt;%
+  group_by() %&gt;%
+  summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE)))
+
+df_pred &lt;- bind_cols(df_pred,df_mean) </code></pre>
+</div>
+<div id="predict-on-the-response-scale" class="section level2">
+<h2>Predict on the RESPONSE scale</h2>
+<pre class="r"><code>df_pred$predicted &lt;- predict(bm4.po4.imp1, newdata = df_pred, type = &quot;response&quot;)
+plot(df_pred$Temperature,df_pred$predicted)</code></pre>
+<p><img role="img" aria-label src="data:image/png;base64,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" alt width="672" /></p>
+</div>
+<div id="linear-interpolation-to-find-where-predicted-probability-crosses-0.10" class="section level2">
+<h2>Linear interpolation to find where predicted probability crosses
+0.10</h2>
+<pre class="r"><code>df1_stats &lt;- df1_nat %&gt;%
+  select(Date,DissAmmonia,DissNitrateNitrite,Temperature,lagDissAmmonia,
+         lagDissNitrateNitrite,DissOrthophos,lagDissOrthophos,
+         logDissAmmonia,logDissNitrateNitrite,laglogDissAmmonia,
+         laglogDissNitrateNitrite,logDissOrthophos,laglogDissOrthophos) %&gt;%
+  pivot_longer(cols = !&quot;Date&quot;,names_to = &quot;Parameter&quot;) %&gt;%
+  group_by(Parameter) %&gt;%
+  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+
+ld10 &lt;- approx(x = df_pred$predicted, y = df_pred$Temperature, xout = 0.10)$y
+ld10_nat&lt;-ld10*df1_stats[4,3]+ df1_stats[4,2]
+ld10_nat</code></pre>
+<pre><code>##         sd
+## 1 23.23276</code></pre>
+</div>
 </div>
 
 
