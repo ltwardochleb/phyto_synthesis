@@ -34,9 +34,8 @@ library(data.table)
 
 
 ```{r}
-#options(na.action = "na.exclude")
 
-# variables to include:
+# variables to include in the analysis:
 c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
        "EXPORT","logEXPORT","OUT","lagOUT", "DissAmmonia",
        "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
@@ -49,6 +48,7 @@ df$Date = as.Date(df$Date)
 
 # 1979 is the start of the study period.
 df <- subset(df,df$Date >= "1979-01-01")
+# 2022 is the end of the study period
 df <- subset(df,df$Date <= "2022-12-31")
 
 # Changing categorical variables to factors
@@ -58,7 +58,7 @@ df$season = as.factor(df$season)
 df$season_num = as.numeric(df$season)
 
 
-#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+# Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
 df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
 df$clam_step <- as.factor(df$clam_step)
 
@@ -74,11 +74,9 @@ df$logSAC <- log(df$SAC)
 df$logOUT <- log(df$OUT)
 df$logEXPORT <- log(df$EXPORT)
 
-# Dropping NAs from the dataset, only for dredging.
 
- df <- subset(df, select = c) #%>%
-    #drop_na()
-
+ df <- subset(df, select = c)
+ 
 ```
 
 
@@ -95,15 +93,9 @@ We are using Multiple Imputations by Chained Equations (MICE) to impute missing 
 
 - Using Predictive Mean Matching (pmm)
 
-- Pooling median p-value (MPV) is useful for analyzing pooled GAMs 
-      - "take the median of all imputed within-imputation GAM p-values as the pooled p-value measuring the strength of evidence for the association." https://pmc.ncbi.nlm.nih.gov/articles/PMC9123297/ 
-
-- Need to Regionally separate data before imputing, then impute each dataset, and then combine into imputed datasets.
-
-Questions:
-  - what are the special considerations for using MICE with GAMs?
+- We are choosing one imputation to present because they all appear to have similar results.
     
-## See Missing Data 
+## See missing data 
 
 ```{r}
 ini <- mice(df, maxit=0)
@@ -114,15 +106,14 @@ ini$nmis
 md.pattern(df)
 ```
 
-## Separate Dataset Regionally
+## Separate dataset regionally
 
 ```{r}
-#we need to remove the flow variables so we don't have duplicated values for each region
+# We need to remove the flow variables so we don't have duplicated values for each region
+
 df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
 
 df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
-
-df_Central <- df_no_flow %>% filter(Regions == "Central")
 
 r <- unique(df_no_flow$Regions)
 region_list <- list()
@@ -140,6 +131,7 @@ Impute all of the regional datasets 5 times
 ```{r include=FALSE}
 
 # This creates a list of mids objects
+
 regional_imp <- list()
 for (region_name in as.character(names(region_list))){
   current_df <- region_list[[region_name]]
@@ -150,14 +142,14 @@ for (region_name in as.character(names(region_list))){
 }
 ```
 
-## inspect convergence regionally {.tabset}
+## Inspect convergence regionally {.tabset}
 
-The plot shows the mean and the standard deviation of the imputed values only. Generally want to see the streams intermingle and be free of any trends at the later iterations. (https://www.gerkovink.com/miceVignettes/Convergence_pooling/Convergence_and_pooling.html)
+The plot shows the mean and the standard deviation of the imputed values only. Generally, we want to see the streams intermingle and be free of any trends at the later iterations. (https://www.gerkovink.com/miceVignettes/Convergence_pooling/Convergence_and_pooling.html)
 
 ### Central
 
 ```{r}
-#check if convergence is maintained over many iterations.
+# Check if convergence is maintained over many iterations.
 imp40 <- mice.mids(regional_imp$Central_imp, maxit=35, print=F)
 plot(imp40)
 ```
@@ -222,7 +214,7 @@ stripplot(regional_imp$SuisunBay_imp)
 ```
 
 
-## Make Combined imputed datasets
+## Make combined imputed datasets
 
 ```{r}
 # Create imputed datasets for each region
@@ -239,9 +231,10 @@ for (region_imp in as.character(names(regional_imp))){
 ```
 
 
-## Add Lag terms to the imputed datasets
+## Add lag terms to the imputed datasets
 
 ```{r}
+# This code is taken from clamdata_cleanup_AB_261125.R
 
 df_list_lag <- lapply(regional_imp_dfs, function(y) {
 #Step 1: summarize by season 
@@ -284,7 +277,7 @@ y <- y %>%
 
 ## Combine the imputed datasets
 
-Now we have to combine the 25 regional datasets into 5 datasets that include all regions.
+Now we have to combine the 25 regional datasets into 5 datasets that include all regions.This is also where we are z-scoring the datasets for better comparison of the predictors' relative effects.
 
 ```{r}
 ### df1
@@ -306,14 +299,14 @@ df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df
   # z-score 
   mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
-###df4
+### df4
 df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
              df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))%>%
   # z-score 
   mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 
-###df5
+### df5
 
 df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
              df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))%>%
@@ -330,36 +323,36 @@ df5$Regions <- as.factor(df5$Regions)
 ```
 
 
-# Fit models with Imputed datasets {.tabset}
+# Fit models with imputed datasets {.tabset}
 
 ## m3.po3
 
 ```{r}
 
-m3.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (OUT*season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
+m3.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(OUT, by = season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
-m3.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (OUT*season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df2, method = 'ML', select=TRUE)
+m3.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(OUT, by = season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df2, method = 'ML', select=TRUE)
 
-m3.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (OUT*season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df3, method = 'ML', select=TRUE)
+m3.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(OUT, by = season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df3, method = 'ML', select=TRUE)
 
-m3.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (OUT*season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df4, method = 'ML', select=TRUE)
+m3.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(OUT, by = season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df4, method = 'ML', select=TRUE)
 
-m3.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) +  s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (OUT*season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df5, method = 'ML', select=TRUE)
+m3.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) +  s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(OUT, by = season) + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df5, method = 'ML', select=TRUE)
 ```
 
-fit again with log transformed terms
+Fit again with log transformed terms
 
 ```{r}
 
-m3.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logOUT*season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
+m3.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
-m3.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) +  s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logOUT*season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df2, method = 'ML', select=TRUE)
+m3.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) +  s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df2, method = 'ML', select=TRUE)
 
-m3.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logOUT*season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df3, method = 'ML', select=TRUE)
+m3.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df3, method = 'ML', select=TRUE)
 
-m3.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logOUT*season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df4, method = 'ML', select=TRUE)
+m3.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df4, method = 'ML', select=TRUE)
 
-m3.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logOUT*season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df5, method = 'ML', select=TRUE)
+m3.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df5, method = 'ML', select=TRUE)
 ```
 
 ## m4.po4
@@ -369,63 +362,60 @@ m3.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) 
 
 #removing SAC here because it was shrunk to 0. Should SAC*season also be removed?
 
-m4.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
+m4.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by = season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
-m4.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df2, method = 'ML', select=TRUE)
+m4.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by = season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df2, method = 'ML', select=TRUE)
 
-m4.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df3, method = 'ML', select=TRUE)
+m4.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df3, method = 'ML', select=TRUE)
 
-m4.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df4, method = 'ML', select=TRUE)
+m4.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df4, method = 'ML', select=TRUE)
 
-m4.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) +  s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df5, method = 'ML', select=TRUE)
+m4.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) +  s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df5, method = 'ML', select=TRUE)
 ```
 
-fit again with log transformed terms
+Fit again with log transformed terms
 
 ```{r}
 
-m4.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
+m4.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
-m4.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) +  s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df2, method = 'ML', select=TRUE)
+m4.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) +  s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df2, method = 'ML', select=TRUE)
 
-m4.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df3, method = 'ML', select=TRUE)
+m4.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df3, method = 'ML', select=TRUE)
 
-m4.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df4, method = 'ML', select=TRUE)
+m4.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df4, method = 'ML', select=TRUE)
 
-m4.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df5, method = 'ML', select=TRUE)
+m4.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite)  + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df5, method = 'ML', select=TRUE)
 ```
 
 
 ## m6.po4
 
 ```{r}
-m6.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df1, method = 'ML', select=TRUE)
+m6.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df1, method = 'ML', select=TRUE)
 
-m6.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df2, method = 'ML', select=TRUE)
+m6.po4.imp2 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df2, method = 'ML', select=TRUE)
 
-m6.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df3, method = 'ML', select=TRUE)
+m6.po4.imp3 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df3, method = 'ML', select=TRUE)
 
-m6.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df4, method = 'ML', select=TRUE)
+m6.po4.imp4 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df4, method = 'ML', select=TRUE)
 
-m6.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + (SAC*season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df5, method = 'ML', select=TRUE)
+m6.po4.imp5 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite)  + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by =season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df5, method = 'ML', select=TRUE)
 
 ```
 
-fit again with log transformations
-
-
-m6.po4
+Fit again with log transformations
 
 ```{r}
-m6.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df1, method = 'ML', select=TRUE)
+m6.po4.imp1.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df1, method = 'ML', select=TRUE)
 
-m6.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df2, method = 'ML', select=TRUE)
+m6.po4.imp2.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df2, method = 'ML', select=TRUE)
 
-m6.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite)+ s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df3, method = 'ML', select=TRUE)
+m6.po4.imp3.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite)+ s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df3, method = 'ML', select=TRUE)
 
-m6.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df4, method = 'ML', select=TRUE)
+m6.po4.imp4.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df4, method = 'ML', select=TRUE)
 
-m6.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + (logSAC*season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df5, method = 'ML', select=TRUE)
+m6.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by = season) + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df5, method = 'ML', select=TRUE)
 
 ```
 
@@ -433,24 +423,24 @@ m6.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) 
 
 To see the comparison of AIC/BIC of all the models in the model selection process, see Model_Selection.Rmd
 
+Here, I am comparing all of the imputed versions of the top 3 models with and without log transformed predictors.
 
-```{r}
-aic_all<- AIC(m3.po4.imp1,m3.po4.imp2,m3.po4.imp3,m3.po4.imp4,m3.po4.imp5, m4.po4.imp1,m4.po4.imp2,m4.po4.imp3,m4.po4.imp4,m4.po4.imp5, m6.po4.imp1,m6.po4.imp2,m6.po4.imp3,m6.po4.imp4,m6.po4.imp5)
-```
-```{r}
-bic_all <- BIC(m3.po4.imp1,m3.po4.imp2,m3.po4.imp3,m3.po4.imp4,m3.po4.imp5, m4.po4.imp1,m4.po4.imp2,m4.po4.imp3,m4.po4.imp4,m4.po4.imp5, m6.po4.imp1,m6.po4.imp2,m6.po4.imp3,m6.po4.imp4,m6.po4.imp5)
+```{r echo=FALSE}
+
+aic_all<- AIC(m3.po4.imp1,m3.po4.imp2,m3.po4.imp3,m3.po4.imp4,m3.po4.imp5, m4.po4.imp1,m4.po4.imp2,m4.po4.imp3,m4.po4.imp4,m4.po4.imp5, m6.po4.imp1,m6.po4.imp2,m6.po4.imp3,m6.po4.imp4,m6.po4.imp5, m3.po4.imp1.log,m3.po4.imp2.log,m3.po4.imp3.log,m3.po4.imp4.log,m3.po4.imp5.log, m4.po4.imp1.log,m4.po4.imp2.log,m4.po4.imp3.log,m4.po4.imp4.log,m4.po4.imp5.log, m6.po4.imp1.log,m6.po4.imp2.log,m6.po4.imp3.log,m6.po4.imp4.log,m6.po4.imp5.log)
+
+bic_all <- BIC(m3.po4.imp1,m3.po4.imp2,m3.po4.imp3,m3.po4.imp4,m3.po4.imp5, m4.po4.imp1,m4.po4.imp2,m4.po4.imp3,m4.po4.imp4,m4.po4.imp5, m6.po4.imp1,m6.po4.imp2,m6.po4.imp3,m6.po4.imp4,m6.po4.imp5, m3.po4.imp1.log,m3.po4.imp2.log,m3.po4.imp3.log,m3.po4.imp4.log,m3.po4.imp5.log, m4.po4.imp1.log,m4.po4.imp2.log,m4.po4.imp3.log,m4.po4.imp4.log,m4.po4.imp5.log, m6.po4.imp1.log,m6.po4.imp2.log,m6.po4.imp3.log,m6.po4.imp4.log,m6.po4.imp5.log)
 ```
 
 
 This table ranks the models by their AIC and shows the difference in AIC/BIC values of each model from the lowest AIC/BIC of all models. The code is taken from here: https://interagencyecologicalprogram.github.io/ND-FASTR/rtm_chl_models_flow_weekly_avg.html#Purpose 
 
-m6.po4 and m4.po4 look to be performing the best
 
 ```{r}
 # AIC values
 aic_all_t <- aic_all %>%
   as_tibble(rownames = "Model") %>%
-  mutate(Model_Number = 1:15, .before = Model)
+  mutate(Model_Number = 1:30, .before = Model)
 
 # BIC values
 bic_all_t <- bic_all %>%
@@ -467,7 +457,7 @@ aic_bic_all %>% arrange(AIC)
 
 ```
 
-# Plot Predictions {.tabset}
+# Plot predictions {.tabset}
 
 ## m3.po4 plotted predictions {.tabset}
 
@@ -597,6 +587,17 @@ lapply(model_list_m3, function(mod) {
 })
 ```
 
+
+### OUT:season
+
+```{r}
+lapply(model_list_m3, function(mod) {
+    plot_predictions(mod, condition = c("OUT","season"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+
 ## Log m3.po4 plotted predictions {.tabset}
 
 ```{r}
@@ -658,7 +659,7 @@ lapply(model_list_m3_log, function(mod) {
 })
 ```
 
-### loglagDissAmmonia
+### laglogDissAmmonia
 
 ```{r}
 lapply(model_list_m3_log, function(mod) {
@@ -690,6 +691,15 @@ lapply(model_list_m3_log, function(mod) {
 ```{r}
 lapply(model_list_m3_log, function(mod) {
     plot_predictions(mod, condition = "Regions", points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+### logOUT:season
+
+```{r}
+lapply(model_list_m3_log, function(mod) {
+    plot_predictions(mod, condition = c("logOUT","season"), points = 0.5) +
       theme_classic(base_size = 12)
 })
 ```
@@ -810,6 +820,16 @@ lapply(model_list_m4, function(mod) {
 })
 ```
 
+
+### SAC:season
+
+```{r}
+lapply(model_list_m4, function(mod) {
+    plot_predictions(mod, condition = c("SAC","season"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
 ## Log m4.po4 plotted predictions {.tabset}
 
 ```{r}
@@ -884,6 +904,16 @@ lapply(model_list_m4_log, function(mod) {
 ```{r}
 lapply(model_list_m4_log, function(mod) {
     plot_predictions(mod, condition = "laglogDissOrthophos", points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+
+### logSAC:season
+
+```{r}
+lapply(model_list_m4_log, function(mod) {
+    plot_predictions(mod, condition = c("logSAC","season"), points = 0.5) +
       theme_classic(base_size = 12)
 })
 ```
@@ -1024,6 +1054,16 @@ lapply(model_list_m6, function(mod) {
 })
 ```
 
+
+### SAC:season
+
+```{r}
+lapply(model_list_m6, function(mod) {
+    plot_predictions(mod, condition = c("SAC","season"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
 ## Log m6.po4 plotted predicitons {.tabset}
 
 ```{r}
@@ -1081,6 +1121,17 @@ lapply(model_list_m6_log, function(mod) {
 })
 ```
 
+
+### EXPORT
+
+```{r}
+
+lapply(model_list_m6_log, function(mod) {
+    plot_predictions(mod, condition = "EXPORT", points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
 ### laglogDissAmmonia
 
 ```{r}
@@ -1107,6 +1158,15 @@ lapply(model_list_m6_log, function(mod) {
 
 lapply(model_list_m6_log, function(mod) {
     plot_predictions(mod, condition = "laglogDissOrthophos", points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+### logSAC:season
+
+```{r}
+lapply(model_list_m6_log, function(mod) {
+    plot_predictions(mod, condition = c("logSAC","season"), points = 0.5) +
       theme_classic(base_size = 12)
 })
 ```
@@ -1222,7 +1282,64 @@ all_diagnostics <- sapply(model_list_m6_log, function(x) gam.check(x))
 summary(m6.po4.imp1.log)
 ```
 
+# Remove flow:season interaction 
+
+We are interested in the effect of removing the flow:season interaction has on the performance of the model. Below, I replicated the top models without the flow:season interaction (denoted by ".nofs"), so we can compare them with our original models farther down. 
+
+```{r}
+m3.po4.imp1.log.nofs <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
+
+m4.po4.imp1.log.nofs <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
+
+m6.po4.imp1.log.nofs <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + clam_step + s(laglogSAC) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(EXPORT)+ s(laglogDissOrthophos),data= df1, method = 'ML', select=TRUE)
+
+m3.po4.imp1.nofs <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + clam_step + s(OUT) + s(lagOUT) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
+
+m4.po4.imp1.nofs <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
+
+m6.po4.imp1.nofs <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(EXPORT)+ s(lagDissOrthophos),data= df1, method = 'ML', select=TRUE)
+```
+
+## Compare AIC/BIC with original models 
+
+To see the comparison of AIC/BIC of all the models in the model selection process, see Model_Selection.Rmd
+
+Here, I am comparing the top models with and without the flow:season interaction for the models with and without the log transformed predictors.
+
+
+```{r echo= FALSE}
+
+aic_all<- AIC(m3.po4.imp1.log.nofs , m4.po4.imp1.log.nofs, m6.po4.imp1.log.nofs,m3.po4.imp1.log, m4.po4.imp1.log, m6.po4.imp1.log, m3.po4.imp1.nofs , m4.po4.imp1.nofs, m6.po4.imp1.nofs, m3.po4.imp1, m4.po4.imp1,m6.po4.imp1)
+
+bic_all <- BIC(m3.po4.imp1.log.nofs , m4.po4.imp1.log.nofs, m6.po4.imp1.log.nofs,m3.po4.imp1.log, m4.po4.imp1.log,m6.po4.imp1.log,m3.po4.imp1.nofs , m4.po4.imp1.nofs, m6.po4.imp1.nofs,m3.po4.imp1, m4.po4.imp1,m6.po4.imp1)
+```
+
+
+This table ranks the models by their AIC and shows the difference in AIC/BIC values of each model from the lowest AIC/BIC of all models. The code is taken from here: https://interagencyecologicalprogram.github.io/ND-FASTR/rtm_chl_models_flow_weekly_avg.html#Purpose 
+
+
+```{r}
+# AIC values
+aic_all_t <- aic_all %>%
+  as_tibble(rownames = "Model")
+
+# BIC values
+bic_all_t <- bic_all %>%
+  as_tibble(rownames = "Model")
+
+# Combine AIC and BIC and calculate differences from lowest value
+aic_bic_all <-
+  left_join(aic_all_t, bic_all_t, by = join_by(Model, df)) %>%
+  mutate(across(c(AIC, BIC), ~ .x - min(.x), .names = "{.col}_delta")) %>%
+  select(starts_with("Model"), df, starts_with("AIC"), starts_with("BIC"))
+
+# Sort by AIC
+aic_bic_all %>% arrange(AIC)
+
+```
+
 # Resources
+
 https://gsp.humboldt.edu/olm/R/05_03_GAM.html
 
 https://www.geeksforgeeks.org/r-language/generalized-additive-models-using-r/
