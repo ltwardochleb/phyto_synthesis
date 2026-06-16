@@ -13,6 +13,9 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, tidy = "styler")
 ```
+# Purpose
+
+The purpose of these models is to understand the effects of environmental drivers and antecedent conditions on Delta-wide phytoplankton biomass (chl-a). 
 
 # Prepare Data
 
@@ -89,11 +92,9 @@ We are using Multiple Imputations by Chained Equations (MICE) to impute missing 
 
 - See this link for a graphic of the imputation process: https://stackoverflow.com/questions/54075836/multiple-imputed-datasets-pooling-results
 
-- Multiple imputed versions of the dataset are created, then each imputed dataset is analysed with the GAM, then results from each of the GAMs are "pooled" together.
+- Multiple imputed versions of the data set are created, then each imputed data set is analysed with the GAM, then GAM outputs from each dataset are compared.
 
-- Using Predictive Mean Matching (pmm)
-
-- We are choosing one imputation to present because they all appear to have similar results.
+- We are using Predictive Mean Matching (pmm) to impute.
     
 ## See missing data 
 
@@ -102,9 +103,6 @@ ini <- mice(df, maxit=0)
 ini$nmis
 ```
 
-```{r}
-md.pattern(df)
-```
 
 ## Separate dataset regionally
 
@@ -153,11 +151,7 @@ The plot shows the mean and the standard deviation of the imputed values only. G
 imp40 <- mice.mids(regional_imp$Central_imp, maxit=35, print=F)
 plot(imp40)
 ```
-Check imputation values
 
-```{r}
-stripplot(regional_imp$Central_imp)
-```
 
 ### Confluence
 
@@ -167,11 +161,6 @@ imp40 <- mice.mids(regional_imp$Confluence_imp, maxit=35, print=F)
 plot(imp40)
 ```
 
-Check imputation values
-
-```{r}
-stripplot(regional_imp$Confluence_imp)
-```
 
 ### North
 
@@ -180,11 +169,7 @@ stripplot(regional_imp$Confluence_imp)
 imp40 <- mice.mids(regional_imp$NorthDelta_imp, maxit=35, print=F)
 plot(imp40)
 ```
-Check imputation values
 
-```{r}
-stripplot(regional_imp$NorthDelta_imp)
-```
 ### South
 
 ```{r}
@@ -193,11 +178,6 @@ imp40 <- mice.mids(regional_imp$South_imp, maxit=35, print=F)
 plot(imp40)
 ```
 
-Check imputation values
-
-```{r}
-stripplot(regional_imp$South_imp)
-```
 
 ### Suisun Bay
 
@@ -205,12 +185,6 @@ stripplot(regional_imp$South_imp)
 #check if convergence is maintained over many iterations.
 imp40 <- mice.mids(regional_imp$SuisunBay_imp, maxit=35, print=F)
 plot(imp40)
-```
-
-Check imputation values
-
-```{r}
-stripplot(regional_imp$SuisunBay_imp)
 ```
 
 
@@ -359,8 +333,6 @@ m3.po4.imp5.log <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) 
 
 ```{r}
 # fit m4.po4 with all 5 imputed datasets
-
-#removing SAC here because it was shrunk to 0. Should SAC*season also be removed?
 
 m4.po4.imp1 <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(lagDissNitrateNitrite) + s(Temperature) + s(Conductivity) + s(Regions, bs='re') + season + s(SAC, by = season) + clam_step + s(lagSAC) + s(lagDissAmmonia)+ s(DissOrthophos)+ s(lagDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
@@ -1237,9 +1209,6 @@ lapply(c, function(x) {
 
 # Results {.tabset}
 
-For information about how to pool results to numerically evaluate relationships described in a GAM fitted with MI datasets, see this paper about the MPV rule:
-https://pmc.ncbi.nlm.nih.gov/articles/PMC9123297/#Sec1
-
 ## m3.po4  {.tabset}
 
 ### GAM check
@@ -1284,8 +1253,6 @@ summary(m6.po4.imp1.log)
 
 # Remove flow:season interaction 
 
-We are interested in the effect of removing the flow:season interaction has on the performance of the model. Below, I replicated the top models without the flow:season interaction (denoted by ".nofs"), so we can compare them with our original models farther down. 
-
 ```{r}
 m3.po4.imp1.log.nofs <- gam((logchla) ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(laglogDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + clam_step + s(logOUT) + s(laglogOUT) + s(laglogDissAmmonia)+ s(logDissOrthophos)+ s(laglogDissOrthophos), data=df1, method = 'ML', select=TRUE)
 
@@ -1302,9 +1269,7 @@ m6.po4.imp1.nofs <- gam((logchla) ~ s(DissAmmonia) + s(DissNitrateNitrite) + s(l
 
 ## Compare AIC/BIC with original models 
 
-To see the comparison of AIC/BIC of all the models in the model selection process, see Model_Selection.Rmd
-
-Here, I am comparing the top models with and without the flow:season interaction for the models with and without the log transformed predictors.
+We are interested in what effect removing the flow:season interaction has on the performance of the models. I replicated the top models without the flow:season interaction (denoted by ".nofs"), so we can compare them to our original models.
 
 
 ```{r echo= FALSE}
@@ -1344,8 +1309,7 @@ https://gsp.humboldt.edu/olm/R/05_03_GAM.html
 
 https://www.geeksforgeeks.org/r-language/generalized-additive-models-using-r/
 
-GIF^(1/(2DF)) >2 - moderate collinearity, GIF>3.16 = high collinearity
-https://019b2da8-edfb-a262-61be-7973c056d9ae.share.connect.posit.cloud/mlr-collinearity.html
+https://019b2da8-edfb-a262-61be-7973c056d9ae.share.connect.posit.cloud/mlr-collinearity.html 
 
 GAM interpretation:
 https://ecogambler.netlify.app/blog/interpreting-gams/
