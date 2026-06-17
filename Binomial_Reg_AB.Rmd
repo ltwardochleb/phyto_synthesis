@@ -46,7 +46,7 @@ df <- read.csv("Data/regional_integrated_dataset3.csv" )
 df$Date = as.Date(df$Date)
 
 # 1979 is the start of the study period.
-df <- subset(df,df$Date >= "1979-01-01")
+df <- subset(df,df$Date >= "1979-01-01" & df$Date < "2023-01-01")
 
 # Changing categorical variables to factors
 df$Regions = as.factor(df$Regions)
