@@ -236,7 +236,7 @@ bm3.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
                       logConductivity + 
                       s(Regions, bs='re') + 
                       season + 
-                      (OUT*season) + 
+                      (logOUT*season) + 
                       clam_step + 
                       logOUT + 
                       laglogOUT + 
@@ -277,10 +277,10 @@ bm4.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
                logConductivity +
-               SAC + 
+               logSAC + 
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               (logSAC*season) +
                clam_step +
                laglogSAC +
                laglogDissAmmonia +
@@ -319,11 +319,11 @@ bm6.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
                logConductivity +
-               SAC +
+               logSAC +
                EXPORT +
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               (logSAC*season) +
                clam_step +
                laglogSAC +
                laglogDissAmmonia +
@@ -333,22 +333,6 @@ bm6.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
              family=binomial(link = "logit"),data=df1,select=T)
 ```
 
-# AIC, BIC
-
-Included log models. 
-
-## Compare with AIC
-
-```{r}
-AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log)
-```
-
-
-## Compare with BIC
-
-```{r}
-BIC(bm3.po4.imp1, bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log)
-```
 
 # Shrink Models
 
@@ -361,7 +345,7 @@ bm3.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                              s(Conductivity) + 
                              s(Regions, bs='re') + 
                              season + 
-                             (OUT*season) + 
+                             s(OUT*season) + 
                              clam_step + 
                              s(OUT) + 
                              s(lagOUT) + 
@@ -381,7 +365,7 @@ bm3.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                              s(logConductivity) + 
                              s(Regions, bs='re') + 
                              season + 
-                             (OUT*season) + 
+                             s(logOUT*season) + 
                              clam_step + 
                              s(logOUT) + 
                              s(laglogOUT) + 
@@ -403,7 +387,7 @@ bm4.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                s(SAC) + 
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               s(SAC*season) +
                clam_step +
                s(lagSAC) +
                s(lagDissAmmonia) +
@@ -423,7 +407,7 @@ bm4.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logSAC) + 
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               s(logSAC*season) +
                clam_step +
                s(laglogSAC) +
                s(laglogDissAmmonia) +
@@ -445,7 +429,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                s(EXPORT) +   
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               s(SAC*season) +
                clam_step +
                s(lagSAC) +
                s(lagDissAmmonia) +
@@ -466,7 +450,7 @@ bm6.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logEXPORT) +   
                s(Regions, bs='re') +
                season +
-               (SAC*season) +
+               s(logSAC*season) +
                clam_step +
                s(laglogSAC) +
                s(laglogDissAmmonia) +
@@ -476,6 +460,97 @@ bm6.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
              family=binomial(link = "logit"),data=df1,select=T)
 summary(bm6.po4.imp1.log.shrink)
 ```
+
+
+# Diagnostics
+
+## AIC
+
+```{r}
+AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink)
+```
+
+
+## BIC
+
+```{r}
+BIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink)
+```
+
+## Residuals
+
+### bm3
+
+bm3.po4.imp1
+```{r}
+testDispersion(bm3.po4.imp1)
+plot(simulateResiduals(bm3.po4.imp1))
+```
+
+bm3.po4.imp1.log
+```{r}
+testDispersion(bm3.po4.imp1.log)
+plot(simulateResiduals(bm3.po4.imp1.log))
+```
+
+bm3.po4.imp1.shrink
+```{r}
+gam.check(bm3.po4.imp1.shrink)
+```
+
+bm3.po4.imp1.log.shrink
+```{r}
+gam.check(bm3.po4.imp1.log.shrink)
+```
+
+### bm4
+
+bm4.po4.imp1
+```{r}
+testDispersion(bm4.po4.imp1)
+plot(simulateResiduals(bm4.po4.imp1))
+```
+
+bm4.po4.imp1.log
+```{r}
+testDispersion(bm4.po4.imp1.log)
+plot(simulateResiduals(bm4.po4.imp1.log))
+```
+
+bm4.po4.imp1.shrink
+```{r}
+gam.check(bm4.po4.imp1.shrink)
+```
+
+bm4.po4.imp1.log.shrink
+```{r}
+gam.check(bm4.po4.imp1.log.shrink)
+```
+
+### bm6
+
+bm6.po4.imp1
+```{r}
+testDispersion(bm6.po4.imp1)
+plot(simulateResiduals(bm6.po4.imp1))
+```
+
+bm6.po4.imp1.log
+```{r}
+testDispersion(bm6.po4.imp1.log)
+plot(simulateResiduals(bm6.po4.imp1.log))
+```
+
+bm6.po4.imp1.shrink
+```{r}
+gam.check(bm6.po4.imp1.shrink)
+```
+
+bm6.po4.imp1.log.shrink
+```{r}
+gam.check(bm6.po4.imp1.log.shrink)
+```
+
 
 # LD50
 https://www.ccohs.ca/oshanswers/chemicals/ld50.html
