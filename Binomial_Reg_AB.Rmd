@@ -5,6 +5,8 @@ author: "Alex Berk"
 output: 
   html_document:
         toc: TRUE
+        toc_float: TRUE
+        code_folding: show
 ---
 
 ```{r setup, include=FALSE}
@@ -334,7 +336,7 @@ bm6.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
 ```
 
 
-# Shrink Models
+# Shrink Models {.tabset}
 
 ## bm3.po4
 ```{r}
@@ -345,7 +347,7 @@ bm3.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                              s(Conductivity) + 
                              s(Regions, bs='re') + 
                              season + 
-                             s(OUT*season) + 
+                             s(OUT,by=season) + 
                              clam_step + 
                              s(OUT) + 
                              s(lagOUT) + 
@@ -356,7 +358,7 @@ bm3.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm3.po4.imp1.shrink)
 ```
 
-log transformed
+##bm3.po4.log
 ```{r}
 bm3.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) + 
                              s(logDissNitrateNitrite) + 
@@ -365,7 +367,7 @@ bm3.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                              s(logConductivity) + 
                              s(Regions, bs='re') + 
                              season + 
-                             s(logOUT*season) + 
+                             s(logOUT,by=season) + 
                              clam_step + 
                              s(logOUT) + 
                              s(laglogOUT) + 
@@ -387,7 +389,7 @@ bm4.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                s(SAC) + 
                s(Regions, bs='re') +
                season +
-               s(SAC*season) +
+               s(OUT,by=season) +
                clam_step +
                s(lagSAC) +
                s(lagDissAmmonia) +
@@ -398,7 +400,7 @@ bm4.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm4.po4.imp1.shrink)
 ```
 
-log transformed
+## bm4.po4.log
 ```{r}
 bm4.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logDissNitrateNitrite) +
@@ -407,7 +409,7 @@ bm4.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logSAC) + 
                s(Regions, bs='re') +
                season +
-               s(logSAC*season) +
+               s(logSAC,by=season) +
                clam_step +
                s(laglogSAC) +
                s(laglogDissAmmonia) +
@@ -429,7 +431,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
                s(EXPORT) +   
                s(Regions, bs='re') +
                season +
-               s(SAC*season) +
+               s(SAC,by=season) +
                clam_step +
                s(lagSAC) +
                s(lagDissAmmonia) +
@@ -440,7 +442,7 @@ bm6.po4.imp1.shrink <- gam(bloom ~ s(DissAmmonia) +
 summary(bm6.po4.imp1.shrink)
 ```
 
-log transformed
+## bm6.po4.log
 ```{r}
 bm6.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logDissNitrateNitrite) +
@@ -450,7 +452,7 @@ bm6.po4.imp1.log.shrink <- gam(bloom ~ s(logDissAmmonia) +
                s(logEXPORT) +   
                s(Regions, bs='re') +
                season +
-               s(logSAC*season) +
+               s(logSAC,by=season) +
                clam_step +
                s(laglogSAC) +
                s(laglogDissAmmonia) +
@@ -477,76 +479,76 @@ AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, b
 BIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink)
 ```
 
-## Residuals
+## Residuals {.tabset}
 
-### bm3
+### bm3 {.tabset}
 
-bm3.po4.imp1
+#### bm3.po4.imp1
 ```{r}
 testDispersion(bm3.po4.imp1)
 plot(simulateResiduals(bm3.po4.imp1))
 ```
 
-bm3.po4.imp1.log
+#### bm3.po4.imp1.log
 ```{r}
 testDispersion(bm3.po4.imp1.log)
 plot(simulateResiduals(bm3.po4.imp1.log))
 ```
 
-bm3.po4.imp1.shrink
+#### bm3.po4.imp1.shrink
 ```{r}
 gam.check(bm3.po4.imp1.shrink)
 ```
 
-bm3.po4.imp1.log.shrink
+#### bm3.po4.imp1.log.shrink
 ```{r}
 gam.check(bm3.po4.imp1.log.shrink)
 ```
 
-### bm4
+### bm4 {.tabset}
 
-bm4.po4.imp1
+#### bm4.po4.imp1
 ```{r}
 testDispersion(bm4.po4.imp1)
 plot(simulateResiduals(bm4.po4.imp1))
 ```
 
-bm4.po4.imp1.log
+#### bm4.po4.imp1.log
 ```{r}
 testDispersion(bm4.po4.imp1.log)
 plot(simulateResiduals(bm4.po4.imp1.log))
 ```
 
-bm4.po4.imp1.shrink
+#### bm4.po4.imp1.shrink
 ```{r}
 gam.check(bm4.po4.imp1.shrink)
 ```
 
-bm4.po4.imp1.log.shrink
+#### bm4.po4.imp1.log.shrink
 ```{r}
 gam.check(bm4.po4.imp1.log.shrink)
 ```
 
-### bm6
+### bm6 {.tabset}
 
-bm6.po4.imp1
+#### bm6.po4.imp1
 ```{r}
 testDispersion(bm6.po4.imp1)
 plot(simulateResiduals(bm6.po4.imp1))
 ```
 
-bm6.po4.imp1.log
+#### bm6.po4.imp1.log
 ```{r}
 testDispersion(bm6.po4.imp1.log)
 plot(simulateResiduals(bm6.po4.imp1.log))
 ```
 
-bm6.po4.imp1.shrink
+#### bm6.po4.imp1.shrink
 ```{r}
 gam.check(bm6.po4.imp1.shrink)
 ```
 
-bm6.po4.imp1.log.shrink
+#### bm6.po4.imp1.log.shrink
 ```{r}
 gam.check(bm6.po4.imp1.log.shrink)
 ```
