@@ -27,6 +27,7 @@ library(stats)
 library(tseries)
 library(DHARMa)
 library(mice)
+library(lme4)
 
 conflicted::conflict_prefer("select","dplyr")
 conflicted::conflict_prefer("filter","dplyr")
@@ -248,6 +249,25 @@ bm3.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
              family=binomial(link = "logit"),data=df1,select=T)
 ```
 
+glm
+```{r}
+bm3.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia + 
+                      logDissNitrateNitrite + 
+                      laglogDissNitrateNitrite + 
+                      Temperature + 
+                      logConductivity + 
+                      (1|Regions) + 
+                      season + 
+                      (logOUT*season) + 
+                      clam_step + 
+                      logOUT + 
+                      laglogOUT + 
+                      laglogDissAmmonia + 
+                      logDissOrthophos + 
+                      laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+```
+
 
 ## bm4.po4
 
@@ -292,6 +312,28 @@ bm4.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
              family=binomial(link = "logit"),data=df1,select=T)
 ```
 
+
+glm:
+```{r}
+bm4.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               Temperature +
+               logConductivity +
+               logSAC + 
+               (1|Regions) +
+               season +
+               (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+```
+
+
+
 ## bm6.po4
 
 Orthophosphos with SAC+ EXPORT
@@ -333,6 +375,26 @@ bm6.po4.imp1.log <- gam(bloom ~ logDissAmmonia +
                logDissOrthophos +
                laglogDissOrthophos,
              family=binomial(link = "logit"),data=df1,select=T)
+```
+
+glm:
+```{r}
+bm6.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               Temperature +
+               logConductivity +
+               logSAC +
+               EXPORT +
+               (1|Regions) +
+               season +
+               (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
 ```
 
 
@@ -469,14 +531,16 @@ summary(bm6.po4.imp1.log.shrink)
 ## AIC
 
 ```{r}
-AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink)
+AIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink,
+    bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
 ```
 
 
 ## BIC
 
 ```{r}
-BIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink)
+BIC(bm3.po4.imp1,bm4.po4.imp1, bm6.po4.imp1,bm3.po4.imp1.log,bm4.po4.imp1.log, bm6.po4.imp1.log,bm3.po4.imp1.shrink, bm4.po4.imp1.shrink, bm6.po4.imp1.shrink,bm3.po4.imp1.log.shrink,bm4.po4.imp1.log.shrink, bm6.po4.imp1.log.shrink,
+    bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
 ```
 
 ## Residuals {.tabset}
@@ -553,8 +617,28 @@ gam.check(bm6.po4.imp1.shrink)
 gam.check(bm6.po4.imp1.log.shrink)
 ```
 
+### NEW - GLMs {.tabset}
 
-# LD50
+#### bm3.po4.imp1.glm
+```{r}
+testDispersion(bm3.po4.imp1.glm)
+plot(simulateResiduals(bm3.po4.imp1.glm))
+```
+
+#### bm4.po4.imp1.glm
+```{r}
+testDispersion(bm4.po4.imp1.glm)
+plot(simulateResiduals(bm4.po4.imp1.glm))
+```
+
+#### bm6.po4.imp1.glm
+```{r}
+testDispersion(bm6.po4.imp1.glm)
+plot(simulateResiduals(bm6.po4.imp1.glm))
+```
+
+
+# LD10
 https://www.ccohs.ca/oshanswers/chemicals/ld50.html
 
 have to back calc from z score
@@ -587,7 +671,7 @@ df_pred <- bind_cols(df_pred,df_mean)
 ## Predict on the RESPONSE scale
 ```{r}
 
-df_pred$predicted <- predict(bm4.po4.imp1, newdata = df_pred, type = "response")
+df_pred$predicted <- predict(bm4.po4.imp1.glm, newdata = df_pred, type = "response")
 plot(df_pred$Temperature,df_pred$predicted)
 ```
 
