@@ -31,6 +31,7 @@ library(lme4)
 
 conflicted::conflict_prefer("select","dplyr")
 conflicted::conflict_prefer("filter","dplyr")
+options(scipen = 999)
 ```
 
 # Prepare data
@@ -645,10 +646,7 @@ have to back calc from z score
 https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values 
 x = std*z + m
 
-## Vary temp and hold others constant
-
-Will probably make this into a function to apply to other variables, but want to test it first!
-```{r}
+```{r, include = FALSE}
 
 # #dataframe with the range of a parameter value and holding the others constant
 # df_pred <- data.frame(
@@ -694,10 +692,60 @@ Will probably make this into a function to apply to other variables, but want to
 
 ```
 
+```{r, include = FALSE}
+
+# df1_stats2 <- df1_nat %>%
+#   select(colnames(model.frame(bm4.po4.imp1.glm)),-bloom) %>%
+#   pivot_longer(cols = is.numeric,names_to = "Parameter") %>%
+#   group_by(Parameter) %>%
+#   summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+# 
+# ld10tab <- as.data.frame(matrix(data = NA,ncol=nrow(df1_stats2),nrow=1))
+# colnames(ld10tab) <- df1_stats2$Parameter 
+# 
+# for(i in colnames(ld10tab)) {
+#   #dataframe with the range of a parameter value and holding the others constant
+#   
+#   df_pred2 <- data.frame(
+#     parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
+#     clam_step = as.factor("post clam"),
+#     season = as.factor("Summer"),
+#     Regions = as.factor("Central")) %>%
+#     rename(!!i := parameter)
+#   
+#   #expand factors
+#   df_pred2$Regions = fct_expand(df_pred2$Regions,c("Central","Confluence","North Delta",
+#                                                  "South", "Suisun Bay"))
+#   df_pred2$season = fct_expand(df_pred2$season,c("Autumn","Spring","Summer","Winter"))
+#   df_pred2$clam_step = fct_expand(df_pred2$clam_step,c("post clam","pre clam"))
+#   
+#   #find median of all other factors
+#   df_mean <- df1 %>%
+#     group_by() %>%
+#     summarize_if(is.numeric, ~ median(.x, na.rm = TRUE)) %>%
+#     select(c(colnames(ld10tab)),-c(i),-bloom)
+#   
+#   df_pred2 <- bind_cols(df_pred2,df_mean)
+#   
+#   #predict response scale
+#   df_pred2$predicted <- predict(bm4.po4.imp1.glm, newdata = df_pred2, type = "response")
+#   
+#   ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = 0.10)$y
+#   ld10_nat<-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
+#   ld10tab[[i]] <- as.numeric(ld10_nat)
+#   }
+#   
+# ld10tab
+
+```
+
+## Function
+
 ```{r}
-df1_stats2 <- df1_nat %>%
-  select(colnames(model.frame(bm4.po4.imp1.glm)),-bloom) %>%
-  pivot_longer(cols = is.numeric,names_to = "Parameter") %>%
+findLD10 <- function(model_name) {
+  df1_stats2 <- df1_nat %>%
+  select(colnames(model.frame(model_name)),-bloom) %>%
+  pivot_longer(cols = where(is.numeric),names_to = "Parameter") %>%
   group_by(Parameter) %>%
   summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
 
@@ -723,18 +771,64 @@ for(i in colnames(ld10tab)) {
   #find median of all other factors
   df_mean <- df1 %>%
     group_by() %>%
-    summarize_if(is.numeric, ~ median(.x, na.rm = TRUE)) %>%
-    select(c(colnames(ld10tab)),-c(i),-bloom)
+    summarize_if(where(is.numeric), ~ median(.x, na.rm = TRUE)) %>%
+    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom)
   
   df_pred2 <- bind_cols(df_pred2,df_mean)
   
   #predict response scale
-  df_pred2$predicted <- predict(bm4.po4.imp1.glm, newdata = df_pred, type = "response")
+  df_pred2$predicted <- predict(model_name, newdata = df_pred2, type = "response")
   
   ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = 0.10)$y
   ld10_nat<-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
   ld10tab[[i]] <- as.numeric(ld10_nat)
-  }
-  
+}
+# ld10tab <- ld10tab %>%
+#   mutate(across(starts_with("l"),~ exp(.x,na.rm=T)))
+ld10tab <- as.data.frame(t(ld10tab)) %>%
+  rownames_to_column() %>%
+  rename("Parameters"= 1,
+         "LD10" = 2) %>%
+  mutate(natural_LD10 = case_when(grepl("log",Parameters) & !is.na(LD10) ~ exp(LD10),
+                                  .default = LD10))
+return(ld10tab)
+}
 
 ```
+
+## LD10 Results {.tabset}
+
+Note the NA's - this means it did not exceed a 10% lethality
+
+### bm3 GAM
+```{r}
+findLD10(bm3.po4.imp1.log)
+```
+
+### bm3 GLM
+```{r}
+findLD10(bm3.po4.imp1.glm)
+```
+
+### bm4 GAM
+```{r}
+findLD10(bm4.po4.imp1.log)
+```
+
+### bm4 GLM
+
+```{r}
+findLD10(bm4.po4.imp1.glm)
+```
+
+### bm6 GAM
+```{r}
+findLD10(bm6.po4.imp1.log)
+```
+
+### bm6 GLM
+```{r}
+findLD10(bm6.po4.imp1.glm)
+```
+
+
