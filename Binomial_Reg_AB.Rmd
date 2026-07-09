@@ -639,7 +639,7 @@ plot(simulateResiduals(bm6.po4.imp1.glm))
 ```
 
 
-# LD10
+# Lethal Dose
 https://www.ccohs.ca/oshanswers/chemicals/ld50.html
 
 have to back calc from z score
@@ -742,7 +742,7 @@ x = std*z + m
 ## Function
 
 ```{r}
-findLD10 <- function(model_name) {
+findLD <- function(model_name,ld_val = 10) {
   df1_stats2 <- df1_nat %>%
   select(colnames(model.frame(model_name)),-bloom) %>%
   pivot_longer(cols = where(is.numeric),names_to = "Parameter") %>%
@@ -779,7 +779,7 @@ for(i in colnames(ld10tab)) {
   #predict response scale
   df_pred2$predicted <- predict(model_name, newdata = df_pred2, type = "response")
   
-  ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = 0.10)$y
+  ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = ld_val/100)$y
   ld10_nat<-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
   ld10tab[[i]] <- as.numeric(ld10_nat)
 }
@@ -788,9 +788,9 @@ for(i in colnames(ld10tab)) {
 ld10tab <- as.data.frame(t(ld10tab)) %>%
   rownames_to_column() %>%
   rename("Parameters"= 1,
-         "LD10" = 2) %>%
-  mutate(natural_LD10 = case_when(grepl("log",Parameters) & !is.na(LD10) ~ exp(LD10),
-                                  .default = LD10))
+         "LD" = 2) %>%
+  mutate(natural_LD = case_when(grepl("log",Parameters) & !is.na(LD) ~ exp(LD),
+                                  .default = LD))
 return(ld10tab)
 }
 
@@ -802,33 +802,168 @@ Note the NA's - this means it did not exceed a 10% lethality
 
 ### bm3 GAM
 ```{r}
-findLD10(bm3.po4.imp1.log)
+findLD(bm3.po4.imp1.log)
 ```
 
 ### bm3 GLM
 ```{r}
-findLD10(bm3.po4.imp1.glm)
+findLD(bm3.po4.imp1.glm)
 ```
 
 ### bm4 GAM
 ```{r}
-findLD10(bm4.po4.imp1.log)
+findLD(bm4.po4.imp1.log)
 ```
 
 ### bm4 GLM
 
 ```{r}
-findLD10(bm4.po4.imp1.glm)
+findLD(bm4.po4.imp1.glm)
 ```
 
 ### bm6 GAM
 ```{r}
-findLD10(bm6.po4.imp1.log)
+findLD(bm6.po4.imp1.log)
 ```
 
 ### bm6 GLM
 ```{r}
-findLD10(bm6.po4.imp1.glm)
+findLD(bm6.po4.imp1.glm)
 ```
 
+
+## LD8 Results {.tabset}
+
+### bm3 GAM
+```{r}
+findLD(bm3.po4.imp1.log,8)
+```
+
+### bm3 GLM
+```{r}
+findLD(bm3.po4.imp1.glm,8)
+```
+
+### bm4 GAM
+```{r}
+findLD(bm4.po4.imp1.log,8)
+```
+
+### bm4 GLM
+
+```{r}
+findLD(bm4.po4.imp1.glm,8)
+```
+
+### bm6 GAM
+```{r}
+findLD(bm6.po4.imp1.log,8)
+```
+
+### bm6 GLM
+```{r}
+findLD(bm6.po4.imp1.glm,8)
+```
+
+
+## LD5 Results {.tabset}
+
+### bm3 GAM
+```{r}
+findLD(bm3.po4.imp1.log,5)
+```
+
+### bm3 GLM
+```{r}
+findLD(bm3.po4.imp1.glm,5)
+```
+
+### bm4 GAM
+```{r}
+findLD(bm4.po4.imp1.log,5)
+```
+
+### bm4 GLM
+
+```{r}
+findLD(bm4.po4.imp1.glm,5)
+```
+
+### bm6 GAM
+```{r}
+findLD(bm6.po4.imp1.log,5)
+```
+
+### bm6 GLM
+```{r}
+findLD(bm6.po4.imp1.glm,5)
+```
+
+
+## LD3 Results {.tabset}
+
+### bm3 GAM
+```{r}
+findLD(bm3.po4.imp1.log,3)
+```
+
+### bm3 GLM
+```{r}
+findLD(bm3.po4.imp1.glm,3)
+```
+
+### bm4 GAM
+```{r}
+findLD(bm4.po4.imp1.log,3)
+```
+
+### bm4 GLM
+
+```{r}
+findLD(bm4.po4.imp1.glm,3)
+```
+
+### bm6 GAM
+```{r}
+findLD(bm6.po4.imp1.log,3)
+```
+
+### bm6 GLM
+```{r}
+findLD(bm6.po4.imp1.glm,3)
+```
+
+
+## LD1 Results {.tabset}
+
+### bm3 GAM
+```{r}
+findLD(bm3.po4.imp1.log,1)
+```
+
+### bm3 GLM
+```{r}
+findLD(bm3.po4.imp1.glm,1)
+```
+
+### bm4 GAM
+```{r}
+findLD(bm4.po4.imp1.log,1)
+```
+
+### bm4 GLM
+
+```{r}
+findLD(bm4.po4.imp1.glm,1)
+```
+
+### bm6 GAM
+```{r}
+findLD(bm6.po4.imp1.log,1)
+```
+
+### bm6 GLM
+```{r}
+findLD(bm6.po4.imp1.glm,1)
+```
 

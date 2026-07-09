@@ -2656,14 +2656,14 @@ summary(bm6.po4.imp1.log.shrink)</code></pre>
 </div>
 </div>
 </div>
-<div id="ld10" class="section level1">
-<h1>LD10</h1>
+<div id="lethal-dose" class="section level1">
+<h1>Lethal Dose</h1>
 <p><a href="https://www.ccohs.ca/oshanswers/chemicals/ld50.html" class="uri">https://www.ccohs.ca/oshanswers/chemicals/ld50.html</a></p>
 <p>have to back calc from z score <a href="https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values" class="uri">https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values</a>
 x = std*z + m</p>
 <div id="function" class="section level2">
 <h2>Function</h2>
-<pre class="r"><code>findLD10 &lt;- function(model_name) {
+<pre class="r"><code>findLD &lt;- function(model_name,ld_val = 10) {
   df1_stats2 &lt;- df1_nat %&gt;%
   select(colnames(model.frame(model_name)),-bloom) %&gt;%
   pivot_longer(cols = where(is.numeric),names_to = &quot;Parameter&quot;) %&gt;%
@@ -2693,14 +2693,14 @@ for(i in colnames(ld10tab)) {
   df_mean &lt;- df1 %&gt;%
     group_by() %&gt;%
     summarize_if(where(is.numeric), ~ median(.x, na.rm = TRUE)) %&gt;%
-    select(c(colnames(ld10tab)),-c(i),-bloom)
+    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom)
   
   df_pred2 &lt;- bind_cols(df_pred2,df_mean)
   
   #predict response scale
   df_pred2$predicted &lt;- predict(model_name, newdata = df_pred2, type = &quot;response&quot;)
   
-  ld10 &lt;- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = 0.10)$y
+  ld10 &lt;- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = ld_val/100)$y
   ld10_nat&lt;-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
   ld10tab[[i]] &lt;- as.numeric(ld10_nat)
 }
@@ -2709,9 +2709,9 @@ for(i in colnames(ld10tab)) {
 ld10tab &lt;- as.data.frame(t(ld10tab)) %&gt;%
   rownames_to_column() %&gt;%
   rename(&quot;Parameters&quot;= 1,
-         &quot;LD10&quot; = 2) %&gt;%
-  mutate(natural_LD10 = case_when(grepl(&quot;log&quot;,Parameters) &amp; !is.na(LD10) ~ exp(LD10),
-                                  .default = LD10))
+         &quot;LD&quot; = 2) %&gt;%
+  mutate(natural_LD = case_when(grepl(&quot;log&quot;,Parameters) &amp; !is.na(LD) ~ exp(LD),
+                                  .default = LD))
 return(ld10tab)
 }</code></pre>
 </div>
@@ -2720,20 +2720,8 @@ return(ld10tab)
 <p>Note the NA’s - this means it did not exceed a 10% lethality</p>
 <div id="bm3-gam" class="section level3">
 <h3>bm3 GAM</h3>
-<pre class="r"><code>findLD10(bm3.po4.imp1.log)</code></pre>
-<pre><code>## Warning: Using an external vector in selections was deprecated in tidyselect 1.1.0.
-## ℹ Please use `all_of()` or `any_of()` instead.
-##   # Was:
-##   data %&gt;% select(i)
-## 
-##   # Now:
-##   data %&gt;% select(all_of(i))
-## 
-## See &lt;https://tidyselect.r-lib.org/reference/faq-external-vector.html&gt;.
-## This warning is displayed once per session.
-## Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
-## generated.</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm3.po4.imp1.log)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1               Temperature 23.295075    23.2950751057
 ## 2         laglogDissAmmonia        NA               NA
 ## 3  laglogDissNitrateNitrite        NA               NA
@@ -2747,8 +2735,8 @@ return(ld10tab)
 </div>
 <div id="bm3-glm" class="section level3">
 <h3>bm3 GLM</h3>
-<pre class="r"><code>findLD10(bm3.po4.imp1.glm)</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm3.po4.imp1.glm)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1               Temperature 23.270751    23.2707510366
 ## 2         laglogDissAmmonia        NA               NA
 ## 3  laglogDissNitrateNitrite        NA               NA
@@ -2762,8 +2750,8 @@ return(ld10tab)
 </div>
 <div id="bm4-gam" class="section level3">
 <h3>bm4 GAM</h3>
-<pre class="r"><code>findLD10(bm4.po4.imp1.log)</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm4.po4.imp1.log)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1               Temperature 25.561260    25.5612602844
 ## 2         laglogDissAmmonia        NA               NA
 ## 3  laglogDissNitrateNitrite        NA               NA
@@ -2777,8 +2765,8 @@ return(ld10tab)
 </div>
 <div id="bm4-glm" class="section level3">
 <h3>bm4 GLM</h3>
-<pre class="r"><code>findLD10(bm4.po4.imp1.glm)</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm4.po4.imp1.glm)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1               Temperature 25.474728    25.4747280066
 ## 2         laglogDissAmmonia        NA               NA
 ## 3  laglogDissNitrateNitrite        NA               NA
@@ -2792,8 +2780,8 @@ return(ld10tab)
 </div>
 <div id="bm6-gam" class="section level3">
 <h3>bm6 GAM</h3>
-<pre class="r"><code>findLD10(bm6.po4.imp1.log)</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm6.po4.imp1.log)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1                    EXPORT        NA               NA
 ## 2               Temperature 24.492625    24.4926254018
 ## 3         laglogDissAmmonia        NA               NA
@@ -2808,8 +2796,8 @@ return(ld10tab)
 </div>
 <div id="bm6-glm" class="section level3">
 <h3>bm6 GLM</h3>
-<pre class="r"><code>findLD10(bm6.po4.imp1.glm)</code></pre>
-<pre><code>##                  Parameters      LD10     natural_LD10
+<pre class="r"><code>findLD(bm6.po4.imp1.glm)</code></pre>
+<pre><code>##                  Parameters        LD       natural_LD
 ## 1                    EXPORT        NA               NA
 ## 2               Temperature 24.456765    24.4567646343
 ## 3         laglogDissAmmonia        NA               NA
@@ -2821,6 +2809,386 @@ return(ld10tab)
 ## 9     logDissNitrateNitrite -4.616820     0.0098841755
 ## 10         logDissOrthophos -7.586977     0.0005070114
 ## 11                   logSAC 10.531962 37494.9859627522</code></pre>
+</div>
+</div>
+<div id="ld8-results" class="section level2 tabset">
+<h2 class="tabset">LD8 Results</h2>
+<div id="bm3-gam-1" class="section level3">
+<h3>bm3 GAM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.log,8)</code></pre>
+<pre><code>##                  Parameters         LD      natural_LD
+## 1               Temperature 21.9641810    21.964180986
+## 2         laglogDissAmmonia         NA              NA
+## 3  laglogDissNitrateNitrite  0.8482649     2.335590781
+## 4       laglogDissOrthophos         NA              NA
+## 5                 laglogOUT         NA              NA
+## 6           logConductivity  7.5403920  1882.567876597
+## 7            logDissAmmonia -5.0273084     0.006556434
+## 8     logDissNitrateNitrite -4.3896348     0.012405258
+## 9          logDissOrthophos -6.0931393     0.002258308
+## 10                   logOUT 10.4491835 34516.181752785</code></pre>
+</div>
+<div id="bm3-glm-1" class="section level3">
+<h3>bm3 GLM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.glm,8)</code></pre>
+<pre><code>##                  Parameters         LD      natural_LD
+## 1               Temperature 21.9462891    21.946289064
+## 2         laglogDissAmmonia         NA              NA
+## 3  laglogDissNitrateNitrite  0.9670868     2.630270865
+## 4       laglogDissOrthophos         NA              NA
+## 5                 laglogOUT         NA              NA
+## 6           logConductivity  7.7231424  2260.050421341
+## 7            logDissAmmonia -5.0927658     0.006141012
+## 8     logDissNitrateNitrite -4.3640012     0.012727361
+## 9          logDissOrthophos -6.2158511     0.001997516
+## 10                   logOUT 10.4993132 36290.568576101</code></pre>
+</div>
+<div id="bm4-gam-1" class="section level3">
+<h3>bm4 GAM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.log,8)</code></pre>
+<pre><code>##                  Parameters        LD      natural_LD
+## 1               Temperature 23.911653    23.911653357
+## 2         laglogDissAmmonia        NA              NA
+## 3  laglogDissNitrateNitrite        NA              NA
+## 4       laglogDissOrthophos        NA              NA
+## 5                 laglogSAC        NA              NA
+## 6           logConductivity  7.803395  2448.902174921
+## 7            logDissAmmonia -5.059898     0.006346208
+## 8     logDissNitrateNitrite -4.192776     0.015104299
+## 9          logDissOrthophos -6.630742     0.001319184
+## 10                   logSAC 10.670278 43056.908291166</code></pre>
+</div>
+<div id="bm4-glm-1" class="section level3">
+<h3>bm4 GLM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.glm,8)</code></pre>
+<pre><code>##                  Parameters        LD      natural_LD
+## 1               Temperature 23.842882    23.842882123
+## 2         laglogDissAmmonia        NA              NA
+## 3  laglogDissNitrateNitrite        NA              NA
+## 4       laglogDissOrthophos        NA              NA
+## 5                 laglogSAC        NA              NA
+## 6           logConductivity  8.058285  3159.865676510
+## 7            logDissAmmonia -5.138575     0.005866040
+## 8     logDissNitrateNitrite -4.165508     0.015521832
+## 9          logDissOrthophos -6.786322     0.001129114
+## 10                   logSAC 10.715239 45036.970021682</code></pre>
+</div>
+<div id="bm6-gam-1" class="section level3">
+<h3>bm6 GAM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.log,8)</code></pre>
+<pre><code>##                  Parameters         LD      natural_LD
+## 1                    EXPORT         NA              NA
+## 2               Temperature 22.8953200    22.895320041
+## 3         laglogDissAmmonia         NA              NA
+## 4  laglogDissNitrateNitrite  0.7099276     2.033843968
+## 5       laglogDissOrthophos         NA              NA
+## 6                 laglogSAC         NA              NA
+## 7           logConductivity  7.5260147  1855.695196400
+## 8            logDissAmmonia -4.8813015     0.007587133
+## 9     logDissNitrateNitrite -3.8436797     0.021414656
+## 10         logDissOrthophos -6.3655376     0.001719817
+## 11                   logSAC 10.3221333 30398.036456618</code></pre>
+</div>
+<div id="bm6-glm-1" class="section level3">
+<h3>bm6 GLM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.glm,8)</code></pre>
+<pre><code>##                  Parameters         LD      natural_LD
+## 1                    EXPORT         NA              NA
+## 2               Temperature 22.8752192    22.875219217
+## 3         laglogDissAmmonia         NA              NA
+## 4  laglogDissNitrateNitrite  0.8153524     2.259971955
+## 5       laglogDissOrthophos         NA              NA
+## 6                 laglogSAC         NA              NA
+## 7           logConductivity  7.7253581  2265.063662043
+## 8            logDissAmmonia -4.9637201     0.006986887
+## 9     logDissNitrateNitrite -3.8462250     0.021360220
+## 10         logDissOrthophos -6.5387427     0.001446306
+## 11                   logSAC 10.3502471 31264.767841745</code></pre>
+</div>
+</div>
+<div id="ld5-results" class="section level2 tabset">
+<h2 class="tabset">LD5 Results</h2>
+<div id="bm3-gam-2" class="section level3">
+<h3>bm3 GAM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.log,5)</code></pre>
+<pre><code>##                  Parameters        LD     natural_LD
+## 1               Temperature 19.238074    19.23807399
+## 2         laglogDissAmmonia        NA             NA
+## 3  laglogDissNitrateNitrite -0.130117     0.87799267
+## 4       laglogDissOrthophos        NA             NA
+## 5                 laglogOUT        NA             NA
+## 6           logConductivity  6.827074   922.48790947
+## 7            logDissAmmonia -3.672987     0.02540047
+## 8     logDissNitrateNitrite -2.524394     0.08010685
+## 9          logDissOrthophos -4.200249     0.01499184
+## 10                   logOUT  9.744880 17066.61551806</code></pre>
+</div>
+<div id="bm3-glm-2" class="section level3">
+<h3>bm3 GLM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.glm,5)</code></pre>
+<pre><code>##                  Parameters          LD     natural_LD
+## 1               Temperature 19.23335227    19.23335227
+## 2         laglogDissAmmonia -0.56617463     0.56769292
+## 3  laglogDissNitrateNitrite -0.07459811     0.92811641
+## 4       laglogDissOrthophos          NA             NA
+## 5                 laglogOUT          NA             NA
+## 6           logConductivity  6.91146278  1003.71438416
+## 7            logDissAmmonia -3.70460307     0.02460998
+## 8     logDissNitrateNitrite -2.51504750     0.08085907
+## 9          logDissOrthophos -4.25870418     0.01414061
+## 10                   logOUT  9.76867174 17477.53710584</code></pre>
+</div>
+<div id="bm4-gam-2" class="section level3">
+<h3>bm4 GAM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.log,5)</code></pre>
+<pre><code>##                  Parameters          LD      natural_LD
+## 1               Temperature 20.53271415    20.532714148
+## 2         laglogDissAmmonia          NA              NA
+## 3  laglogDissNitrateNitrite  0.03926663     1.040047759
+## 4       laglogDissOrthophos          NA              NA
+## 5                 laglogSAC          NA              NA
+## 6           logConductivity  7.03896565  1140.207621119
+## 7            logDissAmmonia -3.83513303     0.021598465
+## 8     logDissNitrateNitrite -2.62333736     0.072560298
+## 9          logDissOrthophos -4.68004975     0.009278552
+## 10                   logSAC 10.18449003 26489.137592242</code></pre>
+</div>
+<div id="bm4-glm-2" class="section level3">
+<h3>bm4 GLM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.glm,5)</code></pre>
+<pre><code>##                  Parameters         LD      natural_LD
+## 1               Temperature 20.5003083    20.500308310
+## 2         laglogDissAmmonia         NA              NA
+## 3  laglogDissNitrateNitrite  0.1053718     1.111123594
+## 4       laglogDissOrthophos         NA              NA
+## 5                 laglogSAC         NA              NA
+## 6           logConductivity  7.1709009  1301.016210045
+## 7            logDissAmmonia -3.8767420     0.020718215
+## 8     logDissNitrateNitrite -2.6106951     0.073483448
+## 9          logDissOrthophos -4.7619032     0.008549323
+## 10                   logSAC 10.2080765 27121.348430715</code></pre>
+</div>
+<div id="bm6-gam-2" class="section level3">
+<h3>bm6 GAM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.log,5)</code></pre>
+<pre><code>##                  Parameters          LD     natural_LD
+## 1                    EXPORT 964.5646772   964.56467720
+## 2               Temperature  19.6235094    19.62350944
+## 3         laglogDissAmmonia  -0.6754459     0.50892944
+## 4  laglogDissNitrateNitrite  -0.2041935     0.81530457
+## 5       laglogDissOrthophos          NA             NA
+## 6                 laglogSAC  10.8244288 50233.06588128
+## 7           logConductivity   6.8119427   908.63433067
+## 8            logDissAmmonia  -3.5908911     0.02757375
+## 9     logDissNitrateNitrite  -2.2563077     0.10473649
+## 10         logDissOrthophos  -4.2996921     0.01357274
+## 11                   logSAC   9.9629600 21225.52987334</code></pre>
+</div>
+<div id="bm6-glm-2" class="section level3">
+<h3>bm6 GLM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.glm,5)</code></pre>
+<pre><code>##                  Parameters          LD     natural_LD
+## 1                    EXPORT 761.7589813   761.75898126
+## 2               Temperature  19.6356833    19.63568333
+## 3         laglogDissAmmonia  -0.7192612     0.48711202
+## 4  laglogDissNitrateNitrite  -0.1504783     0.86029642
+## 5       laglogDissOrthophos          NA             NA
+## 6                 laglogSAC  11.0133001 60675.79281715
+## 7           logConductivity   6.9069130   999.15809928
+## 8            logDissAmmonia  -3.6366309     0.02634094
+## 9     logDissNitrateNitrite  -2.2677887     0.10354089
+## 10         logDissOrthophos  -4.3916126     0.01238075
+## 11                   logSAC   9.9780346 21547.92094902</code></pre>
+</div>
+</div>
+<div id="ld3-results" class="section level2 tabset">
+<h2 class="tabset">LD3 Results</h2>
+<div id="bm3-gam-3" class="section level3">
+<h3>bm3 GAM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.log,3)</code></pre>
+<pre><code>##                  Parameters        LD    natural_LD
+## 1               Temperature 16.351432   16.35143177
+## 2         laglogDissAmmonia -3.106089    0.04477574
+## 3  laglogDissNitrateNitrite -1.166115    0.31157496
+## 4       laglogDissOrthophos        NA            NA
+## 5                 laglogOUT        NA            NA
+## 6           logConductivity  6.071751  433.43888910
+## 7            logDissAmmonia -2.238907    0.10657493
+## 8     logDissNitrateNitrite -0.549312    0.57734687
+## 9          logDissOrthophos -2.195887    0.11125981
+## 10                   logOUT  8.999101 8095.80590856</code></pre>
+</div>
+<div id="bm3-glm-3" class="section level3">
+<h3>bm3 GLM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.glm,3)</code></pre>
+<pre><code>##                  Parameters         LD     natural_LD
+## 1               Temperature 16.3606533    16.36065329
+## 2         laglogDissAmmonia -3.0805544     0.04593378
+## 3  laglogDissNitrateNitrite -1.1776265     0.30800894
+## 4       laglogDissOrthophos         NA             NA
+## 5                 laglogOUT 11.2750979 78833.85921632
+## 6           logConductivity  6.0519848   424.95564522
+## 7            logDissAmmonia -2.2346912     0.10702518
+## 8     logDissNitrateNitrite -0.5572106     0.57280463
+## 9          logDissOrthophos -2.1863026     0.11233131
+## 10                   logOUT  8.9950057  8062.71546392</code></pre>
+</div>
+<div id="bm4-gam-3" class="section level3">
+<h3>bm4 GAM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.log,3)</code></pre>
+<pre><code>##                  Parameters         LD     natural_LD
+## 1               Temperature 16.9547922    16.95479221
+## 2         laglogDissAmmonia -2.5607000     0.07725065
+## 3  laglogDissNitrateNitrite -0.9498226     0.38680962
+## 4       laglogDissOrthophos -2.6053551     0.07387690
+## 5                 laglogSAC  9.7026982 16361.69560993
+## 6           logConductivity  6.2295201   507.51185485
+## 7            logDissAmmonia -2.5382485     0.07900466
+## 8     logDissNitrateNitrite -0.9614765     0.38232795
+## 9          logDissOrthophos -2.6144820     0.07320570
+## 10                   logSAC  9.6700953 15836.85838362</code></pre>
+</div>
+<div id="bm4-glm-3" class="section level3">
+<h3>bm4 GLM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.glm,3)</code></pre>
+<pre><code>##                  Parameters         LD     natural_LD
+## 1               Temperature 16.9608994    16.96089942
+## 2         laglogDissAmmonia -2.5560363     0.07761176
+## 3  laglogDissNitrateNitrite -0.9479395     0.38753871
+## 4       laglogDissOrthophos -2.5848873     0.07540457
+## 5                 laglogSAC  9.7062930 16420.61723860
+## 6           logConductivity  6.2312626   508.39695549
+## 7            logDissAmmonia -2.5406037     0.07881880
+## 8     logDissNitrateNitrite -0.9643201     0.38124233
+## 9          logDissOrthophos -2.6182686     0.07292902
+## 10                   logSAC  9.6710469 15851.93527209</code></pre>
+</div>
+<div id="bm6-gam-3" class="section level3">
+<h3>bm6 GAM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.log,3)</code></pre>
+<pre><code>##                  Parameters           LD     natural_LD
+## 1                    EXPORT 7976.2746276  7976.27462764
+## 2               Temperature   16.1590165    16.15901652
+## 3         laglogDissAmmonia   -3.1232942     0.04401195
+## 4  laglogDissNitrateNitrite   -1.1721465     0.30970147
+## 5       laglogDissOrthophos           NA             NA
+## 6                 laglogSAC    9.3680730 11708.53049989
+## 7           logConductivity    6.0558195   426.58834225
+## 8            logDissAmmonia   -2.2244905     0.10812249
+## 9     logDissNitrateNitrite   -0.5754576     0.56244746
+## 10         logDissOrthophos   -2.1121896     0.12097280
+## 11                   logSAC    9.5826345 14510.59656763</code></pre>
+</div>
+<div id="bm6-glm-3" class="section level3">
+<h3>bm6 GLM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.glm,3)</code></pre>
+<pre><code>##                  Parameters           LD     natural_LD
+## 1                    EXPORT 7931.9922283  7931.99222832
+## 2               Temperature   16.2053790    16.20537901
+## 3         laglogDissAmmonia   -3.0759605     0.04614528
+## 4  laglogDissNitrateNitrite   -1.1731852     0.30937992
+## 5       laglogDissOrthophos           NA             NA
+## 6                 laglogSAC    9.3364604 11344.18372777
+## 7           logConductivity    6.0402685   420.00580180
+## 8            logDissAmmonia   -2.2313910     0.10737896
+## 9     logDissNitrateNitrite   -0.5963998     0.55079105
+## 10         logDissOrthophos   -2.1180376     0.12026742
+## 11                   logSAC    9.5839031 14529.01686365</code></pre>
+</div>
+</div>
+<div id="ld1-results" class="section level2 tabset">
+<h2 class="tabset">LD1 Results</h2>
+<div id="bm3-gam-4" class="section level3">
+<h3>bm3 GAM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.log,1)</code></pre>
+<pre><code>##                  Parameters        LD  natural_LD
+## 1               Temperature 10.275699 10.27569886
+## 2         laglogDissAmmonia        NA          NA
+## 3  laglogDissNitrateNitrite -3.346653  0.03520198
+## 4       laglogDissOrthophos        NA          NA
+## 5                 laglogOUT        NA          NA
+## 6           logConductivity  4.481972 88.40881589
+## 7            logDissAmmonia        NA          NA
+## 8     logDissNitrateNitrite        NA          NA
+## 9          logDissOrthophos        NA          NA
+## 10                   logOUT        NA          NA</code></pre>
+</div>
+<div id="bm3-glm-4" class="section level3">
+<h3>bm3 GLM</h3>
+<pre class="r"><code>findLD(bm3.po4.imp1.glm,1)</code></pre>
+<pre><code>##                  Parameters        LD natural_LD
+## 1               Temperature 10.314284   10.31428
+## 2         laglogDissAmmonia        NA         NA
+## 3  laglogDissNitrateNitrite        NA         NA
+## 4       laglogDissOrthophos        NA         NA
+## 5                 laglogOUT        NA         NA
+## 6           logConductivity  4.242979   69.61494
+## 7            logDissAmmonia        NA         NA
+## 8     logDissNitrateNitrite        NA         NA
+## 9          logDissOrthophos        NA         NA
+## 10                   logOUT        NA         NA</code></pre>
+</div>
+<div id="bm4-gam-4" class="section level3">
+<h3>bm4 GAM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.log,1)</code></pre>
+<pre><code>##                  Parameters        LD  natural_LD
+## 1               Temperature  9.424084  9.42408433
+## 2         laglogDissAmmonia        NA          NA
+## 3  laglogDissNitrateNitrite -3.031626  0.04823712
+## 4       laglogDissOrthophos        NA          NA
+## 5                 laglogSAC        NA          NA
+## 6           logConductivity  4.525825 92.37209664
+## 7            logDissAmmonia        NA          NA
+## 8     logDissNitrateNitrite        NA          NA
+## 9          logDissOrthophos        NA          NA
+## 10                   logSAC        NA          NA</code></pre>
+</div>
+<div id="bm4-glm-4" class="section level3">
+<h3>bm4 GLM</h3>
+<pre class="r"><code>findLD(bm4.po4.imp1.glm,1)</code></pre>
+<pre><code>##                  Parameters        LD  natural_LD
+## 1               Temperature  9.511259  9.51125926
+## 2         laglogDissAmmonia        NA          NA
+## 3  laglogDissNitrateNitrite -3.164916  0.04221769
+## 4       laglogDissOrthophos        NA          NA
+## 5                 laglogSAC        NA          NA
+## 6           logConductivity  4.253538 70.35389981
+## 7            logDissAmmonia        NA          NA
+## 8     logDissNitrateNitrite        NA          NA
+## 9          logDissOrthophos        NA          NA
+## 10                   logSAC        NA          NA</code></pre>
+</div>
+<div id="bm6-gam-4" class="section level3">
+<h3>bm6 GAM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.log,1)</code></pre>
+<pre><code>##                  Parameters        LD    natural_LD
+## 1                    EXPORT        NA            NA
+## 2               Temperature  8.867069    8.86706892
+## 3         laglogDissAmmonia        NA            NA
+## 4  laglogDissNitrateNitrite -3.209464    0.04037825
+## 5       laglogDissOrthophos        NA            NA
+## 6                 laglogSAC        NA            NA
+## 7           logConductivity  4.464356   86.86505291
+## 8            logDissAmmonia        NA            NA
+## 9     logDissNitrateNitrite        NA            NA
+## 10         logDissOrthophos        NA            NA
+## 11                   logSAC  8.782139 6516.80318187</code></pre>
+</div>
+<div id="bm6-glm-4" class="section level3">
+<h3>bm6 GLM</h3>
+<pre class="r"><code>findLD(bm6.po4.imp1.glm,1)</code></pre>
+<pre><code>##                  Parameters        LD    natural_LD
+## 1                    EXPORT        NA            NA
+## 2               Temperature  8.985373    8.98537260
+## 3         laglogDissAmmonia        NA            NA
+## 4  laglogDissNitrateNitrite -3.325748    0.03594562
+## 5       laglogDissOrthophos        NA            NA
+## 6                 laglogSAC        NA            NA
+## 7           logConductivity        NA            NA
+## 8            logDissAmmonia        NA            NA
+## 9     logDissNitrateNitrite        NA            NA
+## 10         logDissOrthophos        NA            NA
+## 11                   logSAC  8.754347 6338.18029993</code></pre>
 </div>
 </div>
 </div>
