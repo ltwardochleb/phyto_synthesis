@@ -1,0 +1,752 @@
+---
+title:
+  "Binomial Regression"
+author: "Alex Berk"
+output: 
+  html_document:
+        toc: TRUE
+        toc_float: TRUE
+        code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+
+```{r, include=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(mgcv)
+library(marginaleffects)
+library(MuMIn)
+library(car)
+library(corrplot)
+library(stats)
+library(tseries)
+library(DHARMa)
+library(mice)
+library(lme4)
+
+conflicted::conflict_prefer("select","dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+options(scipen = 999)
+```
+
+# Prepare data
+
+```{r}
+
+# variables to include:
+c = c("Chlorophyll", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
+       "EXPORT","logEXPORT","OUT","lagOUT", "DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity","lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01" & df$Date < "2023-01-01")
+
+# Changing categorical variables to factors
+df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+df$logEXPORT <- log(df$EXPORT)
+
+# Dropping NAs from the dataset, only for dredging.
+
+ df <- subset(df, select = c) #%>%
+    #drop_na()
+
+```
+
+## Separate Dataset Regionally
+May need to separate by flow as well, check from Ryan
+
+```{r}
+
+df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
+
+df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
+
+r <- unique(df_no_flow$Regions)
+region_list <- list()
+for (region in r){
+  df_regional <- df_no_flow %>% filter(Regions == region)
+  region <- gsub(" ","",region)
+  region_list[[region]] <- df_regional
+}
+
+```
+
+## Impute
+
+```{r}
+regional_imp <- list()
+for (region_name in as.character(names(region_list))){
+  current_df <- region_list[[region_name]]
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
+  new_name <- paste0(region_name, "_imp")
+  regional_imp[[new_name]]<- imp
+}
+```
+
+## Make combined imputed datasets
+```{r}
+regional_imp_dfs <- list()
+action_seq <- as.list(seq(1,5))
+for (region_imp in as.character(names(regional_imp))){
+      current_imp <- regional_imp[[region_imp]]
+      for (i in action_seq){
+        df_new <- complete(current_imp,action = i, include=FALSE)
+        df_new <- left_join( df_new,df_flow, by=c("Date","Regions"))
+        new_name <- paste0(region_imp, "_df", i)
+        regional_imp_dfs[[new_name]]<- df_new}}
+```
+
+
+## Add Lag terms to imputed datasets
+
+```{r}
+# This code is taken from clamdata_cleanup_AB_261125.R
+
+df_list_lag <- lapply(regional_imp_dfs, function(y) {
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- y %>%
+  group_by(Regions,Year,season) %>%
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>% 
+  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite,laglogConductivity,
+         laglogSAC,laglogOUT, laglogDissOrthophos, laglogEXPORT)
+
+
+y <- y %>% 
+  mutate(seasonyear = paste0(season,year(Date))) %>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  select(-seasonyear)%>%
+  relocate(Date)
+})
+```
+
+
+## Combine regional imputed datsets
+```{r}
+### df1 (save natural scale as dataset for later calculations)
+df1_nat <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) 
+
+```
+
+
+## Add bloom threshold to imputation 1
+
+```{r}
+#Binary transformation of bloom absence/presence
+bloom_thresholds <- df1_nat %>%
+  group_by(Regions) %>%
+  summarise(mean = mean(Chlorophyll,na.rm=T),sd=sd(Chlorophyll,na.rm=T)) %>%
+  mutate(bloom_thr = mean + sd) %>%
+  select(-mean,-sd)
+
+#Imputation 1 
+df1_nat <- df1_nat %>%
+  merge(bloom_thresholds,by="Regions",all.x=T) %>%
+  mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
+                           Chlorophyll < bloom_thr ~ 0))
+
+base::paste0("number of blooms: ",toString(sum(df1_nat$bloom))) 
+```
+
+
+## Z-score
+
+```{r}
+# z-score standardizing the dataset for easier comparison of predictors. This facilitates comparison of effect sizes between variables.
+
+df1 <- df1_nat %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+```
+
+
+# Model Fit and Summaries {.tabset}
+
+Use Ryan's top models from the Global GAM result to run a binomial GAM: Models 4 and 6 with PO4.
+
+## bm3.po4.imp1.glm
+Orthophosphos with OUT
+
+```{r}
+bm3.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia + 
+                      logDissNitrateNitrite + 
+                      laglogDissNitrateNitrite + 
+                      Temperature + 
+                      logConductivity + 
+                      (1|Regions) + 
+                      season + 
+                      (logOUT*season) + 
+                      clam_step + 
+                      logOUT + 
+                      laglogOUT + 
+                      laglogDissAmmonia + 
+                      logDissOrthophos + 
+                      laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+
+summary(bm3.po4.imp1.glm)
+```
+
+
+## bm4.po4.imp1.glm
+
+Orthophosphos with SAC (no EXPORT)
+
+```{r}
+bm4.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               Temperature +
+               logConductivity +
+               logSAC + 
+               (1|Regions) +
+               season +
+               (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+summary(bm4.po4.imp1.glm)
+```
+
+
+
+## bm6.po4.imp1.glm
+
+Orthophosphos with SAC and EXPORT
+
+```{r}
+bm6.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               Temperature +
+               logConductivity +
+               logSAC +
+               logEXPORT +
+               (1|Regions) +
+               season +
+               (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+summary(bm6.po4.imp1.glm)
+```
+
+
+# Diagnostics
+
+## AIC
+
+```{r}
+AIC(bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
+```
+
+
+## BIC
+
+```{r}
+BIC(bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
+```
+
+## Residuals {.tabset}
+
+### bm3.po4.imp1.glm
+```{r}
+testDispersion(bm3.po4.imp1.glm)
+plot(simulateResiduals(bm3.po4.imp1.glm))
+```
+
+### bm4.po4.imp1.glm
+```{r}
+testDispersion(bm4.po4.imp1.glm)
+plot(simulateResiduals(bm4.po4.imp1.glm))
+```
+
+### bm6.po4.imp1.glm
+```{r}
+testDispersion(bm6.po4.imp1.glm)
+plot(simulateResiduals(bm6.po4.imp1.glm))
+```
+
+
+# Lethal Dose
+https://www.ccohs.ca/oshanswers/chemicals/ld50.html
+
+have to back calc from z score
+https://stackoverflow.com/questions/21594916/convert-normalized-variables-back-to-non-normalized-values 
+x = std*z + m
+
+```{r, include = FALSE}
+
+# #dataframe with the range of a parameter value and holding the others constant
+# df_pred <- data.frame(
+#   Temperature = seq(min(df1$Temperature,na.rm=T), max(df1$Temperature,na.rm=T), length.out = 1000),
+#   clam_step = as.factor("post clam"),
+#   season = as.factor("Summer"),
+#   Regions = as.factor("Central")
+#   )
+
+# df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
+# df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
+# df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
+# 
+# df_mean <- df1 %>%
+#   select(-clam_step,-Temperature) %>%
+#   group_by() %>%
+#   summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE)))
+# 
+# df_pred <- bind_cols(df_pred,df_mean)  
+# ```
+# 
+# ## Predict on the RESPONSE scale
+# ```{r}
+# 
+# df_pred$predicted <- predict(bm4.po4.imp1.glm, newdata = df_pred, type = "response")
+# ```
+# 
+# ## Linear interpolation to find where predicted probability crosses 0.10
+# ```{r}
+# 
+# df1_stats <- df1_nat %>%
+#   select(Date,DissAmmonia,DissNitrateNitrite,Temperature,lagDissAmmonia,
+#          lagDissNitrateNitrite,DissOrthophos,lagDissOrthophos,
+#          logDissAmmonia,logDissNitrateNitrite,laglogDissAmmonia,
+#          laglogDissNitrateNitrite,logDissOrthophos,laglogDissOrthophos) %>%
+#   pivot_longer(cols = !"Date",names_to = "Parameter") %>%
+#   group_by(Parameter) %>%
+#   summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+# 
+# ld10 <- approx(x = df_pred$predicted, y = df_pred$Temperature, xout = 0.10)$y
+# ld10_nat<-ld10*df1_stats[4,3]+ df1_stats[4,2]
+# ld10_nat
+
+```
+
+```{r, include = FALSE}
+
+# df1_stats2 <- df1_nat %>%
+#   select(colnames(model.frame(bm4.po4.imp1.glm)),-bloom) %>%
+#   pivot_longer(cols = is.numeric,names_to = "Parameter") %>%
+#   group_by(Parameter) %>%
+#   summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+# 
+# ld10tab <- as.data.frame(matrix(data = NA,ncol=nrow(df1_stats2),nrow=1))
+# colnames(ld10tab) <- df1_stats2$Parameter 
+# 
+# for(i in colnames(ld10tab)) {
+#   #dataframe with the range of a parameter value and holding the others constant
+#   
+#   df_pred2 <- data.frame(
+#     parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
+#     clam_step = as.factor("post clam"),
+#     season = as.factor("Summer"),
+#     Regions = as.factor("Central")) %>%
+#     rename(!!i := parameter)
+#   
+#   #expand factors
+#   df_pred2$Regions = fct_expand(df_pred2$Regions,c("Central","Confluence","North Delta",
+#                                                  "South", "Suisun Bay"))
+#   df_pred2$season = fct_expand(df_pred2$season,c("Autumn","Spring","Summer","Winter"))
+#   df_pred2$clam_step = fct_expand(df_pred2$clam_step,c("post clam","pre clam"))
+#   
+#   #find median of all other factors
+#   df_mean <- df1 %>%
+#     group_by() %>%
+#     summarize_if(is.numeric, ~ median(.x, na.rm = TRUE)) %>%
+#     select(c(colnames(ld10tab)),-c(i),-bloom)
+#   
+#   df_pred2 <- bind_cols(df_pred2,df_mean)
+#   
+#   #predict response scale
+#   df_pred2$predicted <- predict(bm4.po4.imp1.glm, newdata = df_pred2, type = "response")
+#   
+#   ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = 0.10)$y
+#   ld10_nat<-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
+#   ld10tab[[i]] <- as.numeric(ld10_nat)
+#   }
+#   
+# ld10tab
+
+```
+
+## Function for LD Plots
+```{r}
+
+ldcurve <- function(model_name,param) {
+  
+  # model_name <- bm3.po4.imp1.glm
+  # param <- "laglogDissNitrateNitrite"
+  
+df_pred <- data.frame(
+  parameter = seq(min(df1[[param]],na.rm=T), max(df1[[param]],na.rm=T), length.out = 1000),
+  clam_step = as.factor("post clam"),
+  season = as.factor("Summer"),
+  Regions = as.factor("Central")) %>%
+  rename(!!param := parameter)
+
+df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
+df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
+df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
+
+model_params <- (model.frame(model_name)) %>%
+  select(-bloom)
+
+df_mean <- df1 %>%
+  select(-clam_step,-c(all_of(param))) %>%
+  group_by() %>%
+  summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE))) 
+
+df_pred <- bind_cols(df_pred,df_mean) %>%
+  select(colnames(model_params))
+
+df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
+
+df1_stats <- df1_nat %>%
+  select(Date,DissAmmonia:laglogEXPORT,-clam_step,-season_num) %>%
+  pivot_longer(cols = !"Date",names_to = "Parameter") %>%
+  group_by(Parameter) %>%
+  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+  
+
+df_pred <- df_pred %>%
+  mutate(paramnat = as.numeric(df1_stats[df1_stats$Parameter == param,3])*df_pred[[param]]+as.numeric(df1_stats[df1_stats$Parameter == param,2])) %>%
+  mutate(paramnat = case_when(grepl("log",param) == T ~ exp(paramnat),
+                              .default = paramnat)) %>%
+  rename(!!paste0(param,"_nat") := paramnat)
+
+plot(df_pred[[paste0(param,"_nat")]],df_pred$predicted,ylab="LD as decimal", xlab= param)
+}
+
+# ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
+
+```
+
+
+## Function for LD10 Values across all parameters
+
+```{r}
+findLD <- function(model_name,ld_val = 10) {
+  df1_stats2 <- df1_nat %>%
+  select(colnames(model.frame(model_name)),-bloom) %>%
+  pivot_longer(cols = where(is.numeric),names_to = "Parameter") %>%
+  group_by(Parameter) %>%
+  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+
+ld10tab <- as.data.frame(matrix(data = NA,ncol=nrow(df1_stats2),nrow=1))
+colnames(ld10tab) <- df1_stats2$Parameter 
+
+for(i in colnames(ld10tab)) {
+  #dataframe with the range of a parameter value and holding the others constant
+  df_pred2 <- data.frame(
+    parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
+    clam_step = as.factor("post clam"),
+    season = as.factor("Summer"),
+    Regions = as.factor("Central")) %>%
+    rename(!!i := parameter)
+  
+  #expand factors
+  df_pred2$Regions = fct_expand(df_pred2$Regions,c("Central","Confluence","North Delta",
+                                                 "South", "Suisun Bay"))
+  df_pred2$season = fct_expand(df_pred2$season,c("Autumn","Spring","Summer","Winter"))
+  df_pred2$clam_step = fct_expand(df_pred2$clam_step,c("post clam","pre clam"))
+  
+  #find median of all other factors
+  df_mean <- df1 %>%
+    group_by() %>%
+    summarize_if(where(is.numeric), ~ median(.x, na.rm = TRUE)) %>%
+    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom)
+  
+  df_pred2 <- bind_cols(df_pred2,df_mean)
+  
+  #predict response scale
+  df_pred2$predicted <- predict(model_name, newdata = df_pred2, type = "response")
+  
+  ld10 <- approx(x = df_pred2$predicted, y = df_pred2[[i]], xout = ld_val/100)$y
+  ld10_nat<-ld10*df1_stats2[df1_stats2$Parameter == i,3]+df1_stats2[df1_stats2$Parameter == i,2]
+  ld10tab[[i]] <- as.numeric(ld10_nat)
+}
+# ld10tab <- ld10tab %>%
+#   mutate(across(starts_with("l"),~ exp(.x,na.rm=T)))
+ld10tab <- as.data.frame(t(ld10tab)) %>%
+  rownames_to_column() %>%
+  rename("Parameters"= 1,
+         "LD" = 2) %>%
+  mutate(LD = case_when(grepl("log",Parameters) & !is.na(LD) ~ exp(LD),
+                                  .default = LD)) %>%
+  rename(!!paste0("LD_",ld_val) := LD)
+return(ld10tab)
+}
+
+```
+
+
+## bm3.po4.imp1.glm LD Results {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm3.po4.imp1.glm,10) %>%
+  merge(findLD(bm3.po4.imp1.glm,8),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm,5),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm,3),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm,1),by="Parameters")
+```
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"laglogDissOrthophos")
+```
+
+
+### laglogOUT Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"laglogOUT")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"logDissOrthophos")
+```
+
+
+### logOUT Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"logOUT")
+```
+
+
+### Temperature Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm,"Temperature")
+```
+
+
+## bm4.po4.imp1.glm LD Results {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm4.po4.imp1.glm,10) %>%
+  merge(findLD(bm4.po4.imp1.glm,8),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm,5),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm,3),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm,1),by="Parameters")
+```
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"laglogDissOrthophos")
+```
+
+
+### laglogSAC Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"laglogSAC")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"logDissOrthophos")
+```
+
+
+### logSAC Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"logSAC")
+```
+
+
+### Temperature Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm,"Temperature")
+```
+
+
+## bm6.po4.imp1.glm LD Results {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm6.po4.imp1.glm,10) %>%
+  merge(findLD(bm6.po4.imp1.glm,8),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm,5),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm,3),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm,1),by="Parameters")
+```
+
+### logEXPORT Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logEXPORT")
+```
+
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"laglogDissOrthophos")
+```
+
+
+### laglogSAC Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"laglogSAC")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logDissOrthophos")
+```
+
+
+### logSAC Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"logSAC")
+```
+
+
+### Temperature Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm,"Temperature")
+```
