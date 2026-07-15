@@ -194,6 +194,16 @@ df1_nat <- df1_nat %>%
   mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
                            Chlorophyll < bloom_thr ~ 0))
 
+bloom_season_imp1 <- df1_nat %>%
+  group_by(season,Regions) %>%
+  summarize(blooms = sum(bloom)) %>%
+  pivot_wider(names_from = Regions,values_from = blooms) %>%
+  mutate(all_regions = sum(across(Central:`Suisun Bay`)))
+
+flow_season_imp1 <- df1_nat %>%
+  group_by(season) %>%
+  summarize(SAC = mean(SAC),OUT=mean(OUT),EXPORT=mean(EXPORT))
+
 base::paste0("number of blooms: ",toString(sum(df1_nat$bloom))) 
 ```
 
@@ -211,17 +221,18 @@ df1 <- df1_nat %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, seaso
 # Model Fit and Summaries {.tabset}
 
 Use Ryan's top models from the Global GAM result to run a binomial GAM: Models 4 and 6 with PO4.
+Update 7/15/2026: removed regions random effect. 
 
 ## bm3.po4.imp1.glm
 Orthophosphos with OUT
 
+
 ```{r}
-bm3.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia + 
+bm3.po4.imp1.glm <- glm(bloom ~ logDissAmmonia + 
                       logDissNitrateNitrite + 
                       laglogDissNitrateNitrite + 
                       Temperature + 
                       logConductivity + 
-                      (1|Regions) + 
                       season + 
                       (logOUT*season) + 
                       clam_step + 
@@ -235,18 +246,16 @@ bm3.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
 summary(bm3.po4.imp1.glm)
 ```
 
-
 ## bm4.po4.imp1.glm
 
 Orthophosphos with SAC (no EXPORT)
 
 ```{r}
-bm4.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+bm4.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
                logConductivity +
                logSAC + 
-               (1|Regions) +
                season +
                (logSAC*season) +
                clam_step +
@@ -266,13 +275,12 @@ summary(bm4.po4.imp1.glm)
 Orthophosphos with SAC and EXPORT
 
 ```{r}
-bm6.po4.imp1.glm <- glmer(bloom ~ logDissAmmonia +
+bm6.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
                logConductivity +
                logSAC +
                logEXPORT +
-               (1|Regions) +
                season +
                (logSAC*season) +
                clam_step +
