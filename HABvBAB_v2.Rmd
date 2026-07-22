@@ -1,0 +1,805 @@
+---
+title: "Classifying HABs, BABs, and no blooms in 2008-2022 dataset - EMP AND PETERSON DATA"
+author: "Schuyler Nardelli"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load data
+Load in PESP, WQ, dayflow, and clam data. For WQ and clam data, make sure there is only one sample associated with each date and station.
+```{r, warning=FALSE, message=FALSE}
+
+# Clear environment and plots
+rm(list = ls()); graphics.off()
+
+# Load libraries
+library(tidyverse)
+library(readxl)
+library(sf)
+library(ggmap)
+library(ggpubr)
+library(EDIutils)
+
+#--------------------------------------------------
+# Helper function for loading EDI entities
+#--------------------------------------------------
+
+read_edi_entity <- function(package_id, entity_name) {
+  entity_id <- read_data_entity_names(package_id) %>%
+    filter(entityName == entity_name) %>%
+    pull(entityId)
+  raw_file <- read_data_entity(package_id, entity_id)
+  readr::read_csv(raw_file, show_col_types = FALSE)
+}
+
+#--------------------------------------------------
+# Load PESP data
+#--------------------------------------------------
+
+pesp <- read_edi_entity(package_id = "edi.2209.2",entity_name = "PESP_enumeration.csv") %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Date, Time)
+
+#--------------------------------------------------
+# Load EMP discrete WQ data
+#--------------------------------------------------
+
+emp <- read_edi_entity(package_id = "edi.458.14",entity_name = "EMP_DWQ_1975-2024") 
+emp$analyte_unit <- paste(emp$Analyte, emp$Result_Unit, sep = "-") 
+
+id_cols <- c("Date", "Time", "Station")
+
+values_wide <- emp %>%
+  group_by(across(all_of(id_cols)), analyte_unit) %>%
+  summarise(Result_Value = first(na.omit(Result_Value)), .groups = "drop") %>%
+  pivot_wider(
+    id_cols   = all_of(id_cols),
+    names_from = analyte_unit,
+    values_from = Result_Value
+  )
+
+depths_wide <- emp %>%
+  filter(!is.na(Sampling_Depth)) %>%
+  mutate(depth_type = if_else(Sampling_Depth <= 3, "surface", "bottom")) %>%
+  group_by(across(all_of(id_cols))) %>%
+  summarise(
+    Sample_depth_surface = first(Sampling_Depth[depth_type == "surface"]),
+    Sample_depth_bottom  = first(Sampling_Depth[depth_type == "bottom"]),
+    .groups = "drop"
+  )
+
+wide <- left_join(depths_wide, values_wide,by = id_cols)
+wide <- wide %>% mutate(across(c(4:30,32:40,44:54), as.numeric))
+
+dat1 <- data.frame(Survey="DWR-EMP",
+                   Station=wide$Station,
+                   Latitude=wide$`Latitude-decimal degrees`,
+                   Longitude=wide$`Longitude-decimal degrees`,
+                   Date=wide$Date,
+                   Datetime=as.POSIXct(paste(wide$Date, wide$Time), format="%Y-%m-%d %H:%M:%S"),
+                   Sample_depth_surface=wide$Sample_depth_surface,
+                   Sample_depth_nutr_surface=wide$Sample_depth_surface,
+                   Sample_depth_bottom=wide$Sample_depth_bottom,
+                   Temperature=wide$`Water Temperature-degC`,
+                   Temperature_bottom=wide$`(Bottom) Water Temperature-degC`,
+                   Conductivity=wide$`Specific Conductance-uS/cm`,
+                   Conductivity_bottom=wide$`(Bottom) Specific Conductance-uS/cm`,
+                   Salinity=NA,
+                   Salinity_bottom=NA,
+                   Secchi=wide$`Secchi Depth-cm`,
+                   TurbidityNTU=wide$`Turbidity-NTU`,
+                   TurbidityNTU_bottom=NA,
+                   TurbidityFNU=wide$`Turbidity-FNU`,
+                   TurbidityFNU_bottom=wide$`(Bottom) Turbidity-FNU`,
+                   DissolvedOxygen=wide$`Dissolved Oxygen mg/L-mg/L`,
+                   DissolvedOxygen_bottom=wide$`(Bottom) Dissolved Oxygen mg/L-mg/L`,
+                   DissolvedOxygenPercent=wide$`Dissolved Oxygen % Saturation-% Saturation`,
+                   DissolvedOxygenPercent_bottom=wide$`(Bottom) Dissolved Oxygen % Saturation-% Saturation`,
+                   pH=wide$`pH-unitless`,
+                   pH_bottom=wide$`(Bottom) pH-unitless`,
+                   Microcystis=wide$`MVI-NA`,
+                   Chlorophyll=wide$`Chlorophyll a-ug/L`,
+                   Chlorophyll_bottom=wide$`(Bottom) Chlorophyll Fluorescence ug/L-ug/L`,
+                   Pheophytin=wide$`Pheophytin a-ug/L`,
+                   TotAmmonia=wide$`Total Ammonia-mg/L`,
+                   DissAmmonia=wide$`Dissolved Ammonia-mg/L`,
+                   DissNitrateNitrite=wide$`Dissolved Nitrate + Nitrite-mg/L`,
+                   TotPhos=wide$`Total Phosphorus-mg/L`,
+                   DissOrthophos=wide$`Dissolved Orthophosphate-mg/L`,
+                   TON=wide$`Total Organic Nitrogen-mg/L`,
+                   DON=wide$`Dissolved Organic Nitrogen-mg/L`,
+                   TKN=wide$`Total Kjeldahl Nitrogen-mg/L`,
+                   TotAlkalinity=wide$`Total Alkalinity-mg/L`,
+                   DissBromide=wide$`Dissolved Bromide-mg/L`,
+                   DissCalcium=wide$`Dissolved Calcium-mg/L`,
+                   TotChloride=wide$`Total Chloride-mg/L`,
+                   DissChloride=wide$`Dissolved Chloride-mg/L`,
+                   DissSilica=wide$`Dissolved Silica-mg/L`,
+                   TOC=wide$`Total Organic Carbon-mg/L`,
+                   DOC=wide$`Dissolved Organic Carbon-mg/L`,
+                   TDS=wide$`Total Dissolved Solids-mg/L`,
+                   TSS=wide$`Total Suspended Solids-mg/L`,
+                   VSS=wide$`Volatile Suspended Solids-mg/L`)
+
+#--------------------------------------------------
+# Load Peterson data
+#--------------------------------------------------
+
+con <- dbConnect(odbc(),
+                 Driver = "MySQL ODBC 9.7 Unicode Driver",
+                 Server = "mysql8.natweb.usgs.gov",
+                 Database = "sfbay",
+                 UID = "sfbay",
+                 PWD = "TnMNAXA9AypR", #Ask Schuyler for PW if you need it!
+                 Port = 3306,
+                 SSLMODE = "REQUIRED")
+
+# Read in cruise database
+cruiseall <- dbReadTable(con, "cruiseall")
+
+# Read in nutrient database
+nutrients <- dbReadTable(con, "nutrients")
+
+# Disconnect database
+dbDisconnect(con)
+rm(con)
+
+id_cols <- c("date", "time", "stat")
+
+binned1 <-  cruiseall %>% select(date,time,stat,depth,dscrchl,dscroxy,oxy,oxysat,temp,salin) %>% 
+  filter(!is.na(dscrchl) | !is.na(dscroxy)) %>%
+  mutate(depth_bin = if_else(depth <= 3, "surface", "deep")) %>%
+  group_by(across(all_of(id_cols)), depth_bin) %>%
+  summarise(depth   = mean(depth,   na.rm = TRUE),
+    dscrchl = mean(dscrchl, na.rm = TRUE),
+    dscroxy = mean(dscroxy, na.rm = TRUE),
+    oxy     = mean(oxy,     na.rm = TRUE),
+    oxysat  = mean(oxysat,  na.rm = TRUE),
+    temp  = mean(temp,  na.rm = TRUE),
+    salin  = mean(salin,  na.rm = TRUE),
+        .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.nan(.x), NA, .x)))
+
+binned2 <-  nutrients %>%
+  mutate(depth_bin = if_else(depth <= 3, "surface", "deep")) %>%
+  group_by(across(all_of(id_cols)), depth_bin) %>%
+  summarise(depth   = mean(depth,   na.rm = TRUE),
+    no2 = mean(no2, na.rm = TRUE),
+    NO32 = mean(NO32, na.rm = TRUE),
+    nh4     = mean(nh4,     na.rm = TRUE),
+    po4  = mean(po4,  na.rm = TRUE),
+    si  = mean(si,  na.rm = TRUE),
+    .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.nan(.x), NA, .x)))
+
+
+wide1 <- binned1 %>%
+  pivot_wider(id_cols     = c(date, time, stat),
+    names_from  = depth_bin,
+    values_from = c(depth, dscrchl, dscroxy, oxy, oxysat, temp, salin),
+    names_glue  = "{.value}_{depth_bin}")
+
+wide2 <- binned2 %>%
+  pivot_wider(id_cols     = c(date, time, stat),
+    names_from  = depth_bin,
+    values_from = c(depth, no2, NO32, nh4, po4, si),
+    names_glue  = "{.value}_{depth_bin}") %>%
+  rename(nut_depth_surface=depth_surface,nut_depth_deep=depth_deep)
+
+joined <- full_join(wide1, wide2, by = c("date", "stat", "time"))
+joined <- joined %>%
+  mutate(oxy_surface_combined = coalesce(dscroxy_surface, oxy_surface),
+         oxy_deep_combined = coalesce(dscroxy_deep, oxy_deep))
+
+stat <- read_excel("Data/Peterson_Stations.xlsx")
+stat <- stat %>% rename(stat=Station)
+stat$stat <- as.numeric(stat$stat)
+joined <- left_join(joined,stat,by="stat")
+
+dat2 <- data.frame(Survey="USGS-BP",
+                   Station=joined$stat,
+                   Latitude=joined$`Latitude (degrees)`,
+                   Longitude=joined$`Longitude (degrees)`,
+                   Date=joined$date,
+                   Datetime=as.POSIXct(paste(joined$date, joined$time), format="%Y-%m-%d %H:%M:%S"),
+                   Sample_depth_surface=joined$depth_surface,
+                   Sample_depth_nutr_surface=joined$nut_depth_surface,
+                   Sample_depth_bottom=joined$depth_deep,
+                   Temperature=joined$temp_surface,
+                   Temperature_bottom=joined$temp_deep,
+                   Conductivity=NA,
+                   Conductivity_bottom=NA,
+                   Salinity=joined$salin_surface,
+                   Salinity_bottom=joined$salin_deep,
+                   Secchi=NA,
+                   TurbidityNTU=NA,
+                   TurbidityNTU_bottom=NA,
+                   TurbidityFNU=NA,
+                   TurbidityFNU_bottom=NA,
+                   DissolvedOxygen=joined$oxy_surface_combined,
+                   DissolvedOxygen_bottom=joined$oxy_deep_combined,
+                   DissolvedOxygenPercent=joined$oxysat_surface,
+                   DissolvedOxygenPercent_bottom=joined$oxysat_deep,
+                   pH=NA,
+                   pH_bottom=NA,
+                   Microcystis=NA,
+                   Chlorophyll=joined$dscrchl_surface,
+                   Chlorophyll_bottom=joined$dscrchl_deep,
+                   Pheophytin=NA,
+                   TotAmmonia=NA,
+                   DissAmmonia=joined$nh4_surface,
+                   DissNitrateNitrite=joined$NO32_surface,
+                   TotPhos=NA,
+                   DissOrthophos=joined$po4_surface,
+                   TON=NA,
+                   DON=NA,
+                   TKN=NA,
+                   TotAlkalinity=NA,
+                   DissBromide=NA,
+                   DissCalcium=NA,
+                   TotChloride=NA,
+                   DissChloride=NA,
+                   DissSilica=joined$si_surface,
+                   TOC=NA,
+                   DOC=NA,
+                   TDS=NA,
+                   TSS=NA,
+                   VSS=NA)
+
+  
+#--------------------------------------------------
+# Merge WQ datasets
+#--------------------------------------------------
+
+wq <- rbind(dat1,dat2)
+wq$Longitude <- as.numeric(wq$Longitude)
+rm(binned1,binned2,cruiseall,dat1,dat2,depths_wide,emp,joined,nutrients,stat,values_wide,wide,wide1,wide2,x,id_cols,read_edi_entity)
+
+#--------------------------------------------------
+# Load EMP benthic data
+#--------------------------------------------------
+
+clam <- read_csv("Data/combined_clams_dataset2.csv",show_col_types = FALSE) %>%
+  mutate(station_name = str_remove(station_name, "^EMP "),Date = as.Date(Date))%>%
+  group_by(Date,station_name)%>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+clam[is.na(clam)] <- NA
+
+#--------------------------------------------------
+# Load Dayflow data
+#--------------------------------------------------
+
+df <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv",show_col_types = FALSE) %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%Y"),WY = ifelse(Month >= 10, Year + 1, Year)) %>%
+  left_join(read_csv("Data/Dayflow/wy_class_ind.csv",show_col_types = FALSE),by = "WY")
+
+```
+
+
+## Calculate presence/absence of potential toxigenic species
+0 = absence of potentially toxigenic species, 1 = presence of potentially toxigenic species.
+```{r, warning=FALSE, message=FALSE}
+
+pesp <- pesp %>%
+  group_by(Date,Station) %>%
+  mutate(ptox = ifelse(any((Genus %in%
+                  c("Microcoleus","Cuspidothrix","Aphanizomenon","Microcystis","Planktothrix") &
+                  Taxon != "Aphanizomenon flos-aquae") |
+        Taxon %in% c("Dolichospermum circinale","Microseira wollei")),1,0)) %>%
+  ungroup()
+
+```
+
+
+## Aggregate PESP data by Algal Group
+```{r, warning=FALSE, message=FALSE}
+
+sum_na <- function(x) ifelse(all(is.na(x)), NA_real_, sum(x, na.rm = TRUE))
+
+pesp1 <- pesp %>%
+  group_by(Survey,Date,Station,Latitude,Longitude,SampleMethod,SampleDepth,DepthType,Lab,
+           CountMethodSample,CountMethodTaxa,Magnification,ptox,AlgalGroup) %>%
+  summarize(Cells_per_mL = sum_na(Cells_per_mL),
+            Units_per_mL = sum_na(Units_per_mL),
+            Biovolume_per_mL = sum_na(Biovolume_per_mL))
+
+# Calculate relative abundance/biovolume for each sample
+tot <- pesp1 %>% group_by(Date,Station) %>% summarise(tot_cells = sum_na(Cells_per_mL),
+                                                      tot_units = sum_na(Units_per_mL),
+                                                      tot_bio = sum_na(Biovolume_per_mL))
+pesp1 <- pesp1 %>% left_join(tot,by=c("Date","Station"))
+pesp1$relative_cell_density <- (pesp1$Cells_per_mL/pesp1$tot_cells)*100;
+pesp1$relative_unit_density <- (pesp1$Units_per_mL/pesp1$tot_units)*100;
+pesp1$relative_biovolume <- (pesp1$Biovolume_per_mL/pesp1$tot_bio)*100;
+
+rm(sum_na,tot)
+
+```
+
+
+## Merge PESP and discrete datasets
+```{r, warning=FALSE, message=FALSE}
+
+# Merge wq and df
+x <- df[,c("Date","SAC","SJR","OUT","EXPORTS","Index")]
+wq_df <- left_join(wq, x, by = "Date")
+wq_df <- subset(wq_df, select = -c(Latitude, Longitude))
+
+# Merge with PESP data
+dat <- left_join(pesp1, wq_df, by = c("Survey","Date","Station"))
+
+rm(x,wq_df,wq_df)
+
+```
+
+## Add in Year, Month, and Season
+```{r, warning=FALSE, message=FALSE}
+
+dat$Month <- month(dat$Date)
+dat$Year <- year(dat$Date)
+
+dat$Season<- NA
+I = which(dat$Month %in% c(7:9)); dat$Season[I]<-"Summer"
+I = which(dat$Month %in% c(10:12)); dat$Season[I]<-"Autumn"
+I = which(dat$Month %in% c(1:3)); dat$Season[I]<-"Winter"
+I = which(dat$Month %in% c(4:6)); dat$Season[I]<-"Spring"
+
+rm(I)
+
+```
+
+## Add in regional designation
+```{r, warning=FALSE, message=FALSE}
+
+points_df <- dat[,c("Station","Survey","Latitude","Longitude")]
+points_df <- unique(points_df)
+points_df <- points_df %>% filter(!is.na(Latitude))
+points_df$id <- 1:length(points_df$Survey)
+
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
+
+points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
+  st_drop_geometry() 
+
+stat <- left_join(points_sf,points_with_region,by=c("Station","Survey","id"))
+coord <- data.frame(st_coordinates(stat$geometry))
+stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
+stat <- stat %>% st_drop_geometry() %>% select(-"id")
+dat <- left_join(dat,stat,by=c("Station","Survey","Latitude","Longitude")) %>%
+  rename(Region = Regions)
+
+rm(stat,points_df,points_sf,points_with_region,Region)
+
+```
+
+
+## Add in monthly clam data
+```{r, warning=FALSE, message=FALSE}
+
+# Add in region
+points_df <- clam[,c("station_name","Latitude","Longitude")]
+points_df <- unique(points_df)
+points_df <- points_df %>% filter(!is.na(Latitude))
+points_df$id <- 1:length(points_df$station_name)
+
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
+
+points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
+  st_drop_geometry() 
+
+stat <- left_join(points_sf,points_with_region,by=c("station_name"))
+coord <- data.frame(st_coordinates(stat$geometry))
+stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
+stat <- stat %>% st_drop_geometry() 
+
+clam <- left_join(clam,stat,by=c("station_name","Latitude","Longitude")) %>%
+  rename(Region = Regions)
+
+rm(stat,points_df,points_sf,points_with_region,Region)
+
+monthly_clam <- clam %>%
+  filter(!is.na(Region)) %>%
+  group_by(Year,Month,Region) %>%
+  summarize(monthly_biomass = mean(Biomass,na.rm=TRUE),
+            monthly_grazing_rate = mean(Grazing_rate,na.rm=TRUE),
+            monthly_filtration_rate = mean(Filtration_rate,na.rm=TRUE)) 
+
+dat <- left_join(dat, monthly_clam, by = c("Year","Month","Region"))
+
+```
+
+
+## Filter dataset
+```{r, warning=FALSE, message=FALSE}
+
+dat1 <- dat %>% filter(Region %in% c("Central", "Confluence", "Suisun Bay") &   
+                        Date > "2007-12-31" &    
+                        Survey %in% c("DWR-EMP","USGS-BP"))   
+
+dat1 <- dat1 %>% ungroup()%>% filter(!if_all(24:67, is.na)) # Screens out PESP samples without corresponding WQ data
+dat1 <- dat1 %>% arrange(Date)
+
+```
+
+
+## Flag "bloom" or "no bloom" for each sample using chl threshold
+Considered "bloom" if Chla is 1 standard deviation above the mean value for the entire time series
+```{r, warning=FALSE, message=FALSE}
+
+dat1$bloom <- NA
+
+# Suisun Bay
+test <- dat1 %>% filter(Region=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,x)
+
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Suisun Bay")
+
+# Confluence
+test <- dat1 %>% filter(Region=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Confluence")
+
+# Central Delta
+test <- dat1 %>% filter(Region=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Central" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Central")
+
+ggarrange(p1,p2,p3,ncol=1)
+
+rm(p1,p2,p3)
+
+```
+
+## Calculate HAB/BAB/No bloom using MVI
+"HAB" if MVI = 3-5 AND occurs from June to October. 
+"BAB" if MVI = 1-2 from June to October OR if the sample was collected during a bloom between November and May.
+"No bloom" if sample was collected between November and May and chlorophyll is below the bloom threshold.
+```{r, warning=FALSE, message=FALSE}
+
+dat1 <- dat1 %>%
+  group_by(Region) %>%
+  mutate(chl_threshold = mean(Chlorophyll, na.rm = TRUE) + sd(Chlorophyll, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    mvi_class = case_when(
+      is.na(Microcystis) ~ NA_character_,
+      Microcystis >= 3 & Month %in% 6:10 ~ "HAB",
+      Microcystis <= 2 & Month %in% 6:10 ~ "BAB",
+      Month %in% c(11, 12, 1:5) ~ "BAB",
+      TRUE ~ NA_character_
+    ),
+    mvi_class = case_when(
+      mvi_class == "BAB" & bloom == "Yes" ~ "BAB",
+      mvi_class == "BAB" & bloom == "No" ~ "No bloom",
+      TRUE ~ mvi_class
+    )
+  )
+
+```
+
+
+## Data coverage
+```{r, warning=FALSE, message=FALSE}
+
+ggplot(data=dat1,aes(x=Date,y=Biovolume_per_mL))+geom_point()+facet_wrap(~Region)+
+  ylab("Biovolume (ug/mL)")
+ggplot(data=dat1,aes(x=Date,y=Cells_per_mL))+geom_point()+facet_wrap(~Region)
+
+
+# Region
+deltabox <- make_bbox(lat = Latitude, lon = Longitude, data = dat1, f = c(.2, .2)) #sets bounding box based on station coordinates, f value adds a buffer around the perimeter
+register_stadiamaps(key = "b4a4b8da-f8e2-4ba1-bcdc-91e9d5c83d00")
+stamenmap <- get_stadiamap(deltabox, zoom = 10, maptype = "alidade_smooth", force = TRUE, crop = TRUE)
+
+ggmap(stamenmap) +
+  geom_point(data = dat1, 
+             mapping = aes(x = Longitude, y = Latitude,fill=Region),size=3,pch=21) +
+  #geom_text(data = dat, aes(x = Longitude, y = Latitude,label = Station),fontface = #"bold",cex=3,vjust=0.5,hjust=1.3)+
+  labs(title = "", x = "Longitude", y = "Latitude") +
+  theme_light(base_size = 12) +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "black"),
+        strip.text = element_text(size = 10),axis.text.x = element_text(angle = 90))+
+  xlab("")+ylab("")+theme_light(base_size = 16) 
+
+# Number of samples per region per season over time
+dat1 %>% group_by(Region, Year, Season)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=Region))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+
+  facet_grid(Season~.)+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")
+
+# Number of samples per region per month over time
+dat1 %>% group_by(Region, Year, Month)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=Region))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+
+  facet_grid(Month~.)+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")
+
+# Number of samples per station and season over time
+dat1 %>% group_by(Station, Region,Season,Year)%>%summarize(n=n()) %>%
+  ggplot(aes(x=Year,y=as.factor(Station)))+geom_tile(aes(fill=n))+
+  scale_fill_gradient(low="white",high="red")+
+  geom_text(aes(label=round(n,1)),size=4)+
+  xlab("")+ylab("")+facet_grid(Region~Season,scales = 'free_y',space='free')+
+  theme_bw(base_size=14)+
+  theme(legend.position = "none")+
+  theme(axis.text.x=element_text(angle = -90, vjust = 0.3))
+
+rm(deltabox,stamenmap)
+```
+
+
+## Backcalculate HAB/BAB using MVI and ptox
+```{r, warning=FALSE, message=FALSE}
+
+library(lme4)
+
+# Prepare data
+dat2 <- dat1 %>% filter(Month %in% (6:10))
+
+train_dat <- dat2 %>% filter(!is.na(ptox) & !is.na(Microcystis) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))%>%
+  mutate(mvi = ifelse(is.na(Microcystis),NA,ifelse(Microcystis %in% 3:5 & Month %in% 6:10, 1, 0)))
+
+missing_dat <- dat2 %>% filter(is.na(Microcystis) & !is.na(ptox) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE)) %>%
+  mutate(mvi = ifelse(is.na(Microcystis),NA,ifelse(Microcystis %in% 3:5 & Month %in% 6:10, 1, 0)))
+
+all_dat <- dat2 %>% filter(!is.na(ptox) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,Microcystis,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE)) %>%
+  mutate(mvi = ifelse(is.na(Microcystis),NA,ifelse(Microcystis %in% 3:5 & Month %in% 6:10, 1, 0)))
+
+# Fit logistic model
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), family = binomial, data = train_dat)
+
+# Use model to predict values on training data
+train_dat$modeled_prob_harmful <- predict(model,newdata = train_dat,type = "response")
+
+train_dat <- train_dat %>% 
+  mutate(modeled_class = case_when(modeled_prob_harmful >= 0.4 ~ "HAB", modeled_prob_harmful < 0.4 ~ "BAB"))
+
+# Use model to predict values on missing data
+missing_dat$modeled_prob_harmful <- predict(model,newdata = missing_dat,type = "response")
+
+missing_dat <- missing_dat %>% 
+  mutate(modeled_class = case_when(modeled_prob_harmful >= 0.4 ~ "HAB", modeled_prob_harmful < 0.4 ~ "BAB"))
+
+# Use model to predict values on entire dataset data
+all_dat$modeled_prob_harmful <- predict(model,newdata = all_dat,type = "response")
+
+all_dat <- all_dat %>% 
+  mutate(modeled_class = case_when(modeled_prob_harmful >= 0.4 ~ "HAB", modeled_prob_harmful < 0.4 ~ "BAB"))
+
+dat1 <- left_join(dat1,all_dat,by=c("Month","Date","Region","Station","Chlorophyll","Microcystis","ptox"))
+
+dat1 <- dat1 %>%
+  mutate(
+    modeled_class = case_when(
+      # existing (or filled) BAB that's below threshold -> demote to No bloom
+      modeled_class == "BAB" & bloom == "No" ~ "No bloom",
+      # existing BAB above threshold stays BAB
+      modeled_class == "BAB" & bloom == "Yes" ~ "BAB",
+      # keep any other existing non-NA value as-is
+      !is.na(modeled_class) ~ modeled_class,
+      # fill NAs with the month + chlorophyll logic
+      Month %in% c(11, 12, 1:5) & bloom == "Yes" ~ "BAB",
+      Month %in% c(11, 12, 1:5) & bloom == "No" ~ "No bloom",
+      TRUE ~ NA_character_
+    )
+  )
+
+rm(dat2,model)
+
+```
+
+
+## Reorder and save final dataset
+```{r, warning=FALSE, message=FALSE}
+
+dat <- dat1[, c("Survey","Year","Season","Month","Date","Region","Station","Latitude","Longitude",
+                 "SampleMethod","SampleDepth","DepthType","Lab","CountMethodSample","CountMethodTaxa",
+                 "Magnification","AlgalGroup","Cells_per_mL","Units_per_mL","Biovolume_per_mL","tot_cells",
+                 "tot_units","tot_bio","relative_cell_density","relative_unit_density","relative_biovolume",
+                 "chl_threshold","bloom","ptox","modeled_prob_harmful","modeled_class","mvi_class",
+                 "Sample_depth_surface","Sample_depth_nutr_surface","Sample_depth_bottom","Microcystis",
+                 "Chlorophyll","Pheophytin","Temperature","Temperature_bottom","Conductivity",
+                 "Conductivity_bottom","Salinity","Salinity_bottom","Secchi","TurbidityNTU",
+                 "TurbidityNTU_bottom","TurbidityFNU","TurbidityFNU_bottom","DissolvedOxygen",
+                 "DissolvedOxygen_bottom","DissolvedOxygenPercent","DissolvedOxygenPercent_bottom","pH",
+                 "DissAmmonia","DissNitrateNitrite","TotPhos","DissOrthophos","TON","DON","TKN",
+                 "DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica","TOC","DOC","TDS",
+                 "TSS","VSS","SAC","SJR","OUT","EXPORTS","Index","monthly_biomass","monthly_grazing_rate","monthly_filtration_rate")]
+
+save(dat, clam, df, pesp, wq, file = "Data/integrated_dataset_2008-2024.RData")
+
+```
+
+
+## (need to be updated) HAB/BAB modeled vs observed figures
+```{r, warning=FALSE, message=FALSE}
+
+# Plot final dataset
+p<- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Confluence" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Confluence")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+p1<- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Suisun Bay" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Suisun Bay")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+
+p2 <- ggplot()+
+  geom_path(data = dat1 %>% filter(Region=="Central" & !is.na(Chlorophyll)),
+            aes(x=Date,y=Chlorophyll),color="black")+ggtitle("Central")+
+  geom_point(data = dat1 %>% filter(Region=="Central" & !is.na(Chlorophyll)),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(harmful_class),shape=as.factor(modeled)),size=1)+
+  scale_fill_manual(values = c("blue", "red","grey"))+scale_shape_manual(values = c(21, 24)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+labs(fill="HAB vs. BAB",shape="Modeled?",x="",y="")
+
+tiff("../phyto_synthesis/Figures/HAB v BAB/final_hab_bab_dataset.tiff", units="in", width=12, height=8, res=300)
+ggarrange(p2,p,p1,ncol=1,common.legend=TRUE)
+dev.off()
+
+
+# Compare real MVI to predicted MVI in training data
+train_dat <- train_dat %>%
+  mutate(color = case_when(
+    pred_class == "BAB" & HAB_BAB_class == "BAB" ~ "blue",
+    pred_class == "HAB" & HAB_BAB_class == "HAB" ~ "red",
+    pred_class == "BAB" & HAB_BAB_class == "HAB" ~ "orange",
+    pred_class == "HAB" & HAB_BAB_class == "BAB" ~ "green",
+    TRUE ~ NA_character_
+  ))
+train_dat <- train_dat %>% arrange(Date)
+
+p <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Central"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Central Delta, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+p1 <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Confluence"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Confluence, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+p2 <- ggplot()+
+  geom_point(data = train_dat %>% filter(Region=="Suisun Bay"),
+             aes(x=Date,y=Chlorophyll,fill=as.factor(color)),pch=21,size=2)+
+  ggtitle("Suisun Bay, training")+
+  scale_fill_manual(values = c("blue", "green","orange","red"),
+                    labels=c("Mod BAB, Obs BAB","Mod HAB, Obs BAB","Mod BAB, Obs HAB","Mod HAB, Obs HAB"))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(fill="Modeled vs. Observed",x="",y="Chl-a (ug/L)")
+
+tiff("../phyto_synthesis/Figures/HAB v BAB/real_v_modeled.tiff", units="in", width=12, height=8, res=300)
+ggarrange(p,p1,p2,ncol=1,common.legend=TRUE,legend="bottom")
+dev.off()
+
+```
+
+
+## (need to be updated) HAB/BAB model validation
+```{r, warning=FALSE, message=FALSE}
+
+library(pROC)      # AUC
+library(caret) 
+library(lme4)
+
+# Prepare data
+dat2 <- dat1 %>% filter(Month %in% (6:10))
+
+train_dat <- dat2 %>% filter(!is.na(ptox) & !is.na(mvi) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+missing_dat <- dat2 %>% filter(is.na(mvi) & !is.na(ptox) & !is.na(Chlorophyll)) %>%
+  select(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  group_by(Month,Date,Region,Station,Chlorophyll,mvi,ptox) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# Fit logistic model
+model <- glmer(mvi ~ ptox + Region * Chlorophyll + (1 | Month), family = binomial, data = train_dat)
+summary(model)
+
+# Cross validation
+set.seed(123)
+ctrl <- trainControl(method = "cv",number = 5,classProbs = TRUE,summaryFunction = twoClassSummary)
+train_dat$harmful_factor <- factor(ifelse(train_dat$mvi == 1, "yes", "no"))
+
+cv_model <- train(harmful_factor ~ ptox + Region * Chlorophyll + (1 | Month),
+  data = train_dat,method = "glm",family = "binomial",trControl = ctrl,metric = "PR")
+mean(cv_model$resample$ROC)
+sd(cv_model$resample$ROC)
+
+# Check model output results
+train_dat$prob_harmful <- predict(model, type = "response")
+ggplot(data=train_dat)+geom_point(aes(y=prob_harmful,x=Chlorophyll))
+ggplot(data=train_dat)+geom_point(aes(y=prob_harmful,x=ptox))
+
+# Validate model
+
+# AUC
+roc_obj <- roc(train_dat$mvi, train_dat$prob_harmful)
+auc_val <- auc(roc_obj)
+
+print(auc_val)
+# AUC ≥ 0.75 → strong enough to justify back-calculation
+# AUC 0.65–0.75 → usable, but report uncertainty carefully
+# AUC < 0.65 → ptox alone may not be reliable predictor
+
+# AUC-PR
+
+# Get predicted probabilities (not class predictions)
+probs <- predict(model,newdata = train_dat,type = "response")
+actual <- train_dat$mvi
+
+# Precision-Recall curve
+pr <- PRROC::pr.curve(scores.class0 = probs, weights.class0 = actual, curve = TRUE)
+plot(pr)
+pr$auc.integral  # Your AUC-PR value
+
+# Confusion matrices
+train_dat$prob_harmful <- predict(model,newdata = train_dat,type = "response")
+
+train_dat <- train_dat %>% 
+  mutate(pred_class = case_when(prob_harmful >= 0.4 ~ "HAB", prob_harmful < 0.4 ~ "BAB")) %>%
+  mutate(HAB_BAB_class = case_when(mvi == 1 ~ "HAB", mvi == 0 ~ "BAB"))
+
+confusionMatrix(factor(train_dat$pred_class),factor(train_dat$HAB_BAB_class), positive = "HAB")
+
+```
