@@ -207,7 +207,6 @@ flow_season_imp1 <- df1_nat %>%
 base::paste0("number of blooms: ",toString(sum(df1_nat$bloom))) 
 ```
 
-
 ## Z-score
 
 ```{r}
@@ -217,24 +216,29 @@ df1 <- df1_nat %>% mutate(across(!c(bloom,Regions,season,Date,Month, Year, seaso
 
 ```
 
+## sum contrasts 
+```{r}
+contrasts(df1$season) <- contr.sum(nlevels(df1$season))
+colnames(contrasts(df1$season)) <- c("Autumn","Spring","Summer")
+```
 
 # Model Fit and Summaries {.tabset}
 
 Use Ryan's top models from the Global GAM result to run a binomial GAM: Models 4 and 6 with PO4.
 Update 7/15/2026: removed regions random effect. 
 
-## bm3.po4.imp1.glm
-Orthophosphos with OUT
+## bm3.po4.imp1.glm1 - temperature
+Orthophosphos with OUT - temp no season
 
 
 ```{r}
-bm3.po4.imp1.glm <- glm(bloom ~ logDissAmmonia + 
+bm3.po4.imp1.glm1 <- glm(bloom ~ logDissAmmonia + 
                       logDissNitrateNitrite + 
                       laglogDissNitrateNitrite + 
                       Temperature + 
                       logConductivity + 
-                      season + 
-                      (logOUT*season) + 
+                      # season + 
+                      # (logOUT*season) + 
                       clam_step + 
                       logOUT + 
                       laglogOUT + 
@@ -243,17 +247,62 @@ bm3.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
                       laglogDissOrthophos,
              family=binomial(link = "logit"),data=df1)
 
-summary(bm3.po4.imp1.glm)
+summary(bm3.po4.imp1.glm1)
 ```
 
-## bm4.po4.imp1.glm
+## bm3.po4.imp1.glm2 - season
+Orthophosphos with OUT - season no temp
 
-Orthophosphos with SAC (no EXPORT)
 
 ```{r}
-bm4.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
+bm3.po4.imp1.glm2 <- glm(bloom ~ logDissAmmonia + 
+                      logDissNitrateNitrite + 
+                      laglogDissNitrateNitrite + 
+                      # Temperature + 
+                      logConductivity + 
+                      season +
+                      (logOUT*season) +
+                      clam_step + 
+                      logOUT + 
+                      laglogOUT + 
+                      laglogDissAmmonia + 
+                      logDissOrthophos + 
+                      laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+
+summary(bm3.po4.imp1.glm2)
+```
+
+## bm4.po4.imp1.glm1 - temperature
+
+Orthophosphos with SAC (no EXPORT) - temp no season
+
+```{r}
+bm4.po4.imp1.glm1 <- glm(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
+               logConductivity +
+               logSAC + 
+               # season +
+               # (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+summary(bm4.po4.imp1.glm1)
+```
+
+## bm4.po4.imp1.glm2 - season
+
+Orthophosphos with SAC (no EXPORT) - season no temp
+
+```{r}
+bm4.po4.imp1.glm2 <- glm(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               # Temperature +
                logConductivity +
                logSAC + 
                season +
@@ -265,19 +314,40 @@ bm4.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
                logDissOrthophos +
                laglogDissOrthophos,
              family=binomial(link = "logit"),data=df1)
-summary(bm4.po4.imp1.glm)
+summary(bm4.po4.imp1.glm2)
 ```
 
+## bm6.po4.imp1.glm1 - temperature
 
-
-## bm6.po4.imp1.glm
-
-Orthophosphos with SAC and EXPORT
+Orthophosphos with SAC and EXPORT - temp no season
 
 ```{r}
-bm6.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
+bm6.po4.imp1.glm1 <- glm(bloom ~ logDissAmmonia +
                logDissNitrateNitrite +
                Temperature +
+               logConductivity +
+               logSAC +
+               logEXPORT +
+               # season +
+               # (logSAC*season) +
+               clam_step +
+               laglogSAC +
+               laglogDissAmmonia +
+               laglogDissNitrateNitrite+
+               logDissOrthophos +
+               laglogDissOrthophos,
+             family=binomial(link = "logit"),data=df1)
+summary(bm6.po4.imp1.glm1)
+```
+
+## bm6.po4.imp1.glm2 - season
+
+Orthophosphos with SAC and EXPORT - season no temp
+
+```{r}
+bm6.po4.imp1.glm2 <- glm(bloom ~ logDissAmmonia +
+               logDissNitrateNitrite +
+               # Temperature +
                logConductivity +
                logSAC +
                logEXPORT +
@@ -290,43 +360,62 @@ bm6.po4.imp1.glm <- glm(bloom ~ logDissAmmonia +
                logDissOrthophos +
                laglogDissOrthophos,
              family=binomial(link = "logit"),data=df1)
-summary(bm6.po4.imp1.glm)
+summary(bm6.po4.imp1.glm2)
 ```
-
 
 # Diagnostics
 
 ## AIC
 
 ```{r}
-AIC(bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
+AIC(bm3.po4.imp1.glm1,bm4.po4.imp1.glm1,bm6.po4.imp1.glm1,bm3.po4.imp1.glm2,
+    bm4.po4.imp1.glm2,bm6.po4.imp1.glm2)
 ```
 
 
 ## BIC
 
 ```{r}
-BIC(bm3.po4.imp1.glm,bm4.po4.imp1.glm,bm6.po4.imp1.glm)
+BIC(bm3.po4.imp1.glm1,bm4.po4.imp1.glm1,bm6.po4.imp1.glm1,bm3.po4.imp1.glm2,
+    bm4.po4.imp1.glm2,bm6.po4.imp1.glm2)
 ```
 
 ## Residuals {.tabset}
 
-### bm3.po4.imp1.glm
+### bm3.po4.imp1.glm1 temperature
 ```{r}
-testDispersion(bm3.po4.imp1.glm)
-plot(simulateResiduals(bm3.po4.imp1.glm))
+testDispersion(bm3.po4.imp1.glm1)
+plot(simulateResiduals(bm3.po4.imp1.glm1))
 ```
 
-### bm4.po4.imp1.glm
+### bm3.po4.imp1.glm2 season
 ```{r}
-testDispersion(bm4.po4.imp1.glm)
-plot(simulateResiduals(bm4.po4.imp1.glm))
+testDispersion(bm3.po4.imp1.glm2)
+plot(simulateResiduals(bm3.po4.imp1.glm2))
 ```
 
-### bm6.po4.imp1.glm
+### bm3.po4.imp1.glm1 temperature
 ```{r}
-testDispersion(bm6.po4.imp1.glm)
-plot(simulateResiduals(bm6.po4.imp1.glm))
+testDispersion(bm4.po4.imp1.glm1)
+plot(simulateResiduals(bm4.po4.imp1.glm1))
+```
+
+### bm3.po4.imp1.glm2 season
+```{r}
+testDispersion(bm4.po4.imp1.glm2)
+plot(simulateResiduals(bm4.po4.imp1.glm2))
+```
+
+### bm3.po4.imp1.glm1 temperature
+```{r}
+testDispersion(bm6.po4.imp1.glm1)
+plot(simulateResiduals(bm6.po4.imp1.glm1))
+```
+
+### bm3.po4.imp1.glm2 season
+```{r}
+testDispersion(bm6.po4.imp1.glm2)
+plot(simulateResiduals(bm6.po4.imp1.glm2))
 ```
 
 
@@ -431,51 +520,62 @@ x = std*z + m
 ```
 
 ## Function for LD Plots
+Creates the LD curves for each parameter and model
 ```{r}
 
 ldcurve <- function(model_name,param) {
   
-  # model_name <- bm3.po4.imp1.glm
+  # model_name <- bm3.po4.imp1.glm1
   # param <- "laglogDissNitrateNitrite"
   
-df_pred <- data.frame(
-  parameter = seq(min(df1[[param]],na.rm=T), max(df1[[param]],na.rm=T), length.out = 1000),
-  clam_step = as.factor("post clam"),
-  season = as.factor("Summer"),
-  Regions = as.factor("Central")) %>%
-  rename(!!param := parameter)
-
-df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
-df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
-df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
-
-model_params <- (model.frame(model_name)) %>%
+  #STEP 1: Create a dataframe that holds all parameters but one constant at their median.
+  
+  #start with a dataframe that sequences between the min/max of the selected parameter and holds the factors constant. Factors can be held at any variable, from my experimenting the results appear to be the same. 
+  df_pred <- data.frame(
+    parameter = seq(min(df1[[param]],na.rm=T), max(df1[[param]],na.rm=T), length.out = 1000),
+    clam_step = as.factor("post clam"),
+    season = as.factor("Summer"),
+    Regions = as.factor("Suisun Bay")) %>%
+    rename(!!param := parameter)
+  
+  #Expand all the factors so that they reflect the same factors in the original dataset. 
+  df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
+  df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
+  df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
+  
+  #Create a vector of water quality parameters from the selected model. Remove blooms because that's what we're predicting.
+  model_params <- (model.frame(model_name)) %>%
   select(-bloom)
 
-df_mean <- df1 %>%
-  select(-clam_step,-c(all_of(param))) %>%
-  group_by() %>%
-  summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE))) 
+  #Find the median of all the non-selected parameters in the the z-scored dataframe.
+  df_mean <- df1 %>%
+    select(-clam_step,-c(all_of(param))) %>%
+    group_by() %>%
+    summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE))) 
 
-df_pred <- bind_cols(df_pred,df_mean) %>%
-  select(colnames(model_params))
-
-df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
-
-df1_stats <- df1_nat %>%
-  select(Date,DissAmmonia:laglogEXPORT,-clam_step,-season_num) %>%
-  pivot_longer(cols = !"Date",names_to = "Parameter") %>%
-  group_by(Parameter) %>%
-  summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+  #bind the sequenced dataframe and the median dataframe. 
+  df_pred <- bind_cols(df_pred,df_mean) %>%
+    select(colnames(model_params))
   
+  #STEP 2: Predict blooms based on the datframe you created.
+  df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
 
-df_pred <- df_pred %>%
-  mutate(paramnat = as.numeric(df1_stats[df1_stats$Parameter == param,3])*df_pred[[param]]+as.numeric(df1_stats[df1_stats$Parameter == param,2])) %>%
+  #summarize the statistics of the natural (pre-z-scored) dataframe. 
+  df1_stats <- df1_nat %>%
+    select(Date,DissAmmonia:laglogEXPORT,-clam_step,-season_num) %>%
+    pivot_longer(cols = !"Date",names_to = "Parameter") %>%
+    group_by(Parameter) %>%
+    summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
+  
+  #transform the selected parameter to reflect the natural values. 
+  df_pred <- df_pred %>%
+    mutate(paramnat = as.numeric(df1_stats[df1_stats$Parameter == param,3])*df_pred[[param]]+as.numeric(df1_stats[df1_stats$Parameter == param,2])) %>%
   mutate(paramnat = case_when(grepl("log",param) == T ~ exp(paramnat),
                               .default = paramnat)) %>%
   rename(!!paste0(param,"_nat") := paramnat)
 
-plot(df_pred[[paste0(param,"_nat")]],df_pred$predicted,ylab="LD as decimal", xlab= param)
+  #Plot the LD curve
+  plot(df_pred[[paste0(param,"_nat")]],df_pred$predicted,ylab="LD as decimal", xlab= param)
 }
 
 # ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
@@ -502,7 +602,7 @@ for(i in colnames(ld10tab)) {
     parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
     clam_step = as.factor("post clam"),
     season = as.factor("Summer"),
-    Regions = as.factor("Central")) %>%
+    Regions = as.factor("Suisun Bay")) %>%
     rename(!!i := parameter)
   
   #expand factors
@@ -541,220 +641,424 @@ return(ld10tab)
 ```
 
 
-## bm3.po4.imp1.glm LD Results {.tabset}
+## bm3.po4.imp1.glm1 (temperature) LD Results {.tabset}
 
 ### LD values (shown as natural)
 ```{r}
-findLD(bm3.po4.imp1.glm,10) %>%
-  merge(findLD(bm3.po4.imp1.glm,8),by="Parameters") %>%
-  merge(findLD(bm3.po4.imp1.glm,5),by="Parameters") %>%
-  merge(findLD(bm3.po4.imp1.glm,3),by="Parameters") %>%
-  merge(findLD(bm3.po4.imp1.glm,1),by="Parameters")
+findLD(bm3.po4.imp1.glm1,10) %>%
+  merge(findLD(bm3.po4.imp1.glm1,8),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm1,5),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm1,3),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm1,1),by="Parameters")
 ```
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"laglogDissAmmonia")
+ldcurve(bm3.po4.imp1.glm1,"laglogDissAmmonia")
 ```
 
 
 ### laglogDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
+ldcurve(bm3.po4.imp1.glm1,"laglogDissNitrateNitrite")
 ```
 
 
 ### laglogDissOrthophos Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"laglogDissOrthophos")
+ldcurve(bm3.po4.imp1.glm1,"laglogDissOrthophos")
 ```
 
 
 ### laglogOUT Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"laglogOUT")
+ldcurve(bm3.po4.imp1.glm1,"laglogOUT")
 ```
 
 
 ### logConductivity Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"logConductivity")
+ldcurve(bm3.po4.imp1.glm1,"logConductivity")
 ```
 
 
 ### logDissAmmonia Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"logDissAmmonia")
+ldcurve(bm3.po4.imp1.glm1,"logDissAmmonia")
 ```
 
 
 ### logDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"logDissNitrateNitrite")
+ldcurve(bm3.po4.imp1.glm1,"logDissNitrateNitrite")
 ```
 
 
 ### logDissOrthophos Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"logDissOrthophos")
+ldcurve(bm3.po4.imp1.glm1,"logDissOrthophos")
 ```
 
 
 ### logOUT Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"logOUT")
+ldcurve(bm3.po4.imp1.glm1,"logOUT")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm,"Temperature")
+ldcurve(bm3.po4.imp1.glm1,"Temperature")
 ```
 
 
-## bm4.po4.imp1.glm LD Results {.tabset}
+
+## bm3.po4.imp1.glm2 (season) LD Results {.tabset}
 
 ### LD values (shown as natural)
 ```{r}
-findLD(bm4.po4.imp1.glm,10) %>%
-  merge(findLD(bm4.po4.imp1.glm,8),by="Parameters") %>%
-  merge(findLD(bm4.po4.imp1.glm,5),by="Parameters") %>%
-  merge(findLD(bm4.po4.imp1.glm,3),by="Parameters") %>%
-  merge(findLD(bm4.po4.imp1.glm,1),by="Parameters")
+findLD(bm3.po4.imp1.glm2,10) %>%
+  merge(findLD(bm3.po4.imp1.glm2,8),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm2,5),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm2,3),by="Parameters") %>%
+  merge(findLD(bm3.po4.imp1.glm2,1),by="Parameters")
 ```
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"laglogDissAmmonia")
+ldcurve(bm3.po4.imp1.glm2,"laglogDissAmmonia")
 ```
 
 
 ### laglogDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"laglogDissNitrateNitrite")
+ldcurve(bm3.po4.imp1.glm2,"laglogDissNitrateNitrite")
 ```
 
 
 ### laglogDissOrthophos Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"laglogDissOrthophos")
+ldcurve(bm3.po4.imp1.glm2,"laglogDissOrthophos")
 ```
 
 
-### laglogSAC Plot
+### laglogOUT Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"laglogSAC")
+ldcurve(bm3.po4.imp1.glm2,"laglogOUT")
 ```
 
 
 ### logConductivity Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"logConductivity")
+ldcurve(bm3.po4.imp1.glm2,"logConductivity")
 ```
 
 
 ### logDissAmmonia Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"logDissAmmonia")
+ldcurve(bm3.po4.imp1.glm2,"logDissAmmonia")
 ```
 
 
 ### logDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"logDissNitrateNitrite")
+ldcurve(bm3.po4.imp1.glm2,"logDissNitrateNitrite")
 ```
 
 
 ### logDissOrthophos Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"logDissOrthophos")
+ldcurve(bm3.po4.imp1.glm2,"logDissOrthophos")
+```
+
+
+### logOUT Plot
+```{r}
+ldcurve(bm3.po4.imp1.glm2,"logOUT")
+```
+
+## bm4.po4.imp1.glm1 (temperature) LD Results {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm4.po4.imp1.glm1,10) %>%
+  merge(findLD(bm4.po4.imp1.glm1,8),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm1,5),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm1,3),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm1,1),by="Parameters")
+```
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"laglogDissOrthophos")
+```
+
+
+### laglogSAC Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"laglogSAC")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm1,"logDissOrthophos")
 ```
 
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"logSAC")
+ldcurve(bm4.po4.imp1.glm1,"logSAC")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm,"Temperature")
+ldcurve(bm4.po4.imp1.glm1,"Temperature")
 ```
 
 
-## bm6.po4.imp1.glm LD Results {.tabset}
+
+## bm4.po4.imp1.glm2 (season) LD Results {.tabset}
 
 ### LD values (shown as natural)
 ```{r}
-findLD(bm6.po4.imp1.glm,10) %>%
-  merge(findLD(bm6.po4.imp1.glm,8),by="Parameters") %>%
-  merge(findLD(bm6.po4.imp1.glm,5),by="Parameters") %>%
-  merge(findLD(bm6.po4.imp1.glm,3),by="Parameters") %>%
-  merge(findLD(bm6.po4.imp1.glm,1),by="Parameters")
+findLD(bm4.po4.imp1.glm2,10) %>%
+  merge(findLD(bm4.po4.imp1.glm2,8),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm2,5),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm2,3),by="Parameters") %>%
+  merge(findLD(bm4.po4.imp1.glm2,1),by="Parameters")
+```
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"laglogDissOrthophos")
+```
+
+
+### laglogSAC Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"laglogSAC")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"logDissOrthophos")
+```
+
+
+### logSAC Plot
+```{r}
+ldcurve(bm4.po4.imp1.glm2,"logSAC")
+```
+
+
+
+## bm6.po4.imp1.glm1 LD Results (Temperature) {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm6.po4.imp1.glm1,10) %>%
+  merge(findLD(bm6.po4.imp1.glm1,8),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm1,5),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm1,3),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm1,1),by="Parameters")
 ```
 
 ### logEXPORT Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logEXPORT")
+ldcurve(bm6.po4.imp1.glm1,"logEXPORT")
 ```
 
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"laglogDissAmmonia")
+ldcurve(bm6.po4.imp1.glm1,"laglogDissAmmonia")
 ```
 
 
 ### laglogDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"laglogDissNitrateNitrite")
+ldcurve(bm6.po4.imp1.glm1,"laglogDissNitrateNitrite")
 ```
 
 
 ### laglogDissOrthophos Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"laglogDissOrthophos")
+ldcurve(bm6.po4.imp1.glm1,"laglogDissOrthophos")
 ```
 
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"laglogSAC")
+ldcurve(bm6.po4.imp1.glm1,"laglogSAC")
 ```
 
 
 ### logConductivity Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logConductivity")
+ldcurve(bm6.po4.imp1.glm1,"logConductivity")
 ```
 
 
 ### logDissAmmonia Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logDissAmmonia")
+ldcurve(bm6.po4.imp1.glm1,"logDissAmmonia")
 ```
 
 
 ### logDissNitrateNitrite Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logDissNitrateNitrite")
+ldcurve(bm6.po4.imp1.glm1,"logDissNitrateNitrite")
 ```
 
 
 ### logDissOrthophos Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logDissOrthophos")
+ldcurve(bm6.po4.imp1.glm1,"logDissOrthophos")
 ```
 
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"logSAC")
+ldcurve(bm6.po4.imp1.glm1,"logSAC")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm,"Temperature")
+ldcurve(bm6.po4.imp1.glm1,"Temperature")
 ```
+
+
+## bm6.po4.imp1.glm2 LD Results (Season) {.tabset}
+
+### LD values (shown as natural)
+```{r}
+findLD(bm6.po4.imp1.glm2,10) %>%
+  merge(findLD(bm6.po4.imp1.glm2,8),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm2,5),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm2,3),by="Parameters") %>%
+  merge(findLD(bm6.po4.imp1.glm2,1),by="Parameters")
+```
+
+### logEXPORT Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logEXPORT")
+```
+
+
+### laglogDissAmmonia Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"laglogDissAmmonia")
+```
+
+
+### laglogDissNitrateNitrite Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"laglogDissNitrateNitrite")
+```
+
+
+### laglogDissOrthophos Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"laglogDissOrthophos")
+```
+
+
+### laglogSAC Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"laglogSAC")
+```
+
+
+### logConductivity Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logConductivity")
+```
+
+
+### logDissAmmonia Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logDissAmmonia")
+```
+
+
+### logDissNitrateNitrite Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logDissNitrateNitrite")
+```
+
+
+### logDissOrthophos Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logDissOrthophos")
+```
+
+
+### logSAC Plot
+```{r}
+ldcurve(bm6.po4.imp1.glm2,"logSAC")
+```
+
