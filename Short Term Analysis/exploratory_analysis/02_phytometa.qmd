@@ -1,0 +1,285 @@
+# Load libraries/data
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+Using `01_afterlab.Rda`
+
+```{r}
+# load data
+load(here::here('Short Term Analysis/st_data/01_afterlab.Rda'))
+```
+
+# Format data
+
+## Subset WQ
+
+Subset "wq" to comparable data based on the formatted "dat" data (now df_cells).
+
+Add columns for "YearGroup" (2008-2014, 2015-2022) and Season (OnSeason/OffSeason), referring to HAB Season.
+
+```{r}
+wq_sub <- wq %>%
+  ungroup() %>%
+  semi_join(
+    df_cells %>%
+      distinct(Station, Date),
+    by = c("Station", "Date")
+  )
+
+wq_sub <- wq_sub %>%
+  mutate(
+    Year = as.integer(format(Date, '%Y')),
+    YearGroup = case_when(
+      Year %in% 2008:2014 ~ '08-14',
+      Year %in% 2015:2022 ~ '15-22'
+    ),
+    Season = if_else(
+      as.integer(format(Date, '%m')) %in% 5:10,
+      'OnSeason',
+      'OffSeason'
+    )
+  ) %>%
+  filter(!is.na(YearGroup))
+```
+
+## Add Phyto Groups
+
+Add columns for "YearGroup" (2008-2014, 2015-2022) and Season (OnSeason/OffSeason), referring to HAB Season.
+
+Also add other groupings for display purposes.
+
+```{r}
+df_phyto_meta <- df_phyto_meta %>%
+  mutate(
+    Year = as.integer(format(Date, '%Y')),
+    YearGroup = case_when(
+      Year %in% 2008:2014 ~ '08-14',
+      Year %in% 2015:2022 ~ '15-22'
+    ),
+    Season = if_else(
+      as.integer(format(Date, '%m')) %in% 5:10,
+      'OnSeason',
+      'OffSeason'
+    ),
+    Group = paste(YearGroup, Season, sep = ': '),
+    MVI_bin = Microcystis,
+    Ptox = round(ptox),
+    MVI_Ptox = paste(MVI_bin, Ptox, sep = ' : ')
+  ) %>%
+  filter(!is.na(YearGroup))
+```
+
+# Checks
+
+## MVI (categorical)
+
+Uses wq data; using subsetted data for better comparison.
+
+```{r}
+wq_sub %>%
+  mutate(
+    MVI = round(Microcystis)
+  ) %>%
+  count(MVI, Season) %>%
+  pivot_wider(
+    names_from = Season,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+```{r}
+wq_sub %>%
+  mutate(
+    Group = paste(YearGroup, Season, sep = ': '),
+    MVI = round(Microcystis)
+  ) %>%
+  count(MVI, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## MVI (binary)
+
+```{r}
+df_phyto_meta %>%
+  count(MVI_bin, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## MVI:Ptox
+
+```{r}
+df_phyto_meta %>%
+  count(MVI_Ptox, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## Bloom
+
+*Bloom*: binary value based on whether Chla is \>1 SD above the mean within the given region
+
+```{r}
+df_phyto_meta %>%
+  count(bloom, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## Bloom:Class
+
+*Bloom*: binary value based on whether Chla is \>1 SD above the mean within the given region
+
+*Class*: HAB/BAB classification from `HAB_BAB_class` variable
+
+- NA: no bloom? very few (only 6) of these
+
+```{r}
+df_phyto_meta %>%
+  count(Bloom_Class, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## Harmful Class
+
+Based off Bloom:Class
+
+- HAB: Class == HAB; Bloom irrelevant
+
+- BAB: Class == BAB; Bloom == Yes
+
+- No bloom: Class == BAB; Bloom == No
+
+```{r}
+df_phyto_meta %>%
+  count(mvi_class, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+# Check Ptox
+
+## MVI:Ptox:Chla
+
+```{r}
+df_phyto_meta %>%
+  mutate(
+    Chla = case_when(
+      bloom == 'Yes' ~ 1,
+      bloom == 'No' ~ 0
+    ),
+    MVI_Ptox_Chla = paste(MVI_bin, Ptox, Chla, sep = ' : ')
+  ) %>%
+  filter(!is.na(YearGroup)) %>%
+  group_by(MVI_Ptox_Chla, Group) %>%
+  summarise(
+    num_HAB = sum(pred_class == 'HAB', na.rm = TRUE),
+    num_total = sum(pred_class %in% c('HAB', 'BAB'), na.rm = TRUE),
+    pct_HAB = round(100 * num_HAB / num_total, 2),
+    pct_num = sprintf('%.1f%% (%d)', pct_HAB, num_HAB),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(
+    id_cols = MVI_Ptox_Chla,
+    names_from = Group,
+    values_from = pct_num
+  ) %>%
+  select(MVI_Ptox_Chla, matches(': OnSeason$'))
+```
+
+## "Confusion Matrix"
+
+How often does MVI vs modeling (pred_class) disagree? What role does ptox play when they do?
+
+```{r}
+df_phyto_meta %>%
+  filter(MVI_bin %in% c(0, 1)) %>%
+  mutate(pred_ptox = paste(pred_class, Ptox, sep = ' : ')) %>%
+  count(MVI_bin, pred_ptox) %>%
+  pivot_wider(
+    names_from = pred_ptox,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+```{r}
+df_phyto_meta %>%
+  filter(MVI_bin %in% c(0, 1)) %>%
+  mutate(
+    pred_class2 = case_when(
+      pred_class %in% c("BAB", "NA") ~ "NotHAB",
+      is.na(pred_class) ~ "NotHAB",
+      TRUE ~ pred_class
+    ),
+    pred_ptox = paste(pred_class2, Ptox, sep = " : ")
+  ) %>%
+  count(MVI_bin, pred_ptox) %>%
+  pivot_wider(
+    names_from = pred_ptox,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+# Modeled
+
+```{r}
+df_phyto_meta %>%
+  count(modeled, Group) %>%
+  pivot_wider(
+    names_from = Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+## % Modeled (All)
+
+```{r}
+df_phyto_meta %>%
+  group_by(YearGroup) %>%
+  summarise(
+    n_total = n(),
+    n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
+    pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
+    .groups = 'drop'
+  )
+```
+
+## % Modeled (by Season)
+
+```{r}
+df_phyto_meta %>%
+  group_by(Group) %>%
+  summarise(
+    n_total = n(),
+    n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
+    pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
+    .groups = 'drop'
+  )
+```

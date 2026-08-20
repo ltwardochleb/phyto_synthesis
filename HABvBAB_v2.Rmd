@@ -1,5 +1,5 @@
 ---
-title: "Classifying HABs, BABs, and no blooms in 2008-2022 dataset - EMP AND PETERSON DATA"
+title: "Classifying HABs, BABs, and no blooms in 2008-2024 dataset - EMP AND PETERSON DATA"
 author: "Schuyler Nardelli"
 date: "`r Sys.Date()`"
 output: html_document
@@ -20,6 +20,8 @@ rm(list = ls()); graphics.off()
 library(tidyverse)
 library(readxl)
 library(sf)
+library(DBI)
+library(odbc)
 library(ggmap)
 library(ggpubr)
 library(EDIutils)
