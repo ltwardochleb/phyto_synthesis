@@ -1,0 +1,244 @@
+```{r}
+library(tidyverse)
+library(here)
+library(nnet)
+library(mgcv)
+library(corrplot)
+
+conflicted::conflict_prefer('multinom', 'mgcv')
+conflicted::conflict_prefer('select', 'dplyr')
+
+load(here::here('Short Term Analysis/st_data/04_imputedata.Rda'))
+```
+# TODO: prioritize global model, then do the regional models
+  - RE of region
+
+
+# Goal
+
+Multinomial GAM on short-term dataset.
+
+# Data
+
+Data is from the '04_imputedata.Rda' file, which contains one run of imputed data via `mice`'s multiple imputation algorithm. Characteristics:
+
+- data currently at the Station level
+   - Flow variables: system-wide
+   - Clams: region-wide
+
+- Algal Group data is currently taxon data aggregated per Station ($G_{s,g} = \sum{x_{s,t}}$)
+
+Response variable: `harmful_class`: final classification of **HAB, BAB, or no bloom**. Categories were determined via \<method\> in \<filename\>.
+
+- Only data from (date) onwards (bc...) is used.
+
+- Classification determined by MVI scores.
+
+## Regions/Flow Variables
+
+Flow Variables:
+
+- SAC (input)
+
+- SJR (input)
+
+- Exports (output) export to facilities in South Delta
+
+- OUT (Net Delta Outflow Index; NDOI) where $$OUT = Inflow - Exports - Used$$
+
+  - or is it NDO? (uses stations)
+
+  - Inflow includes SAC and SJR
+
+# Clean Data
+
+## Remove AbsCellDensity and TotPhos cols
+
+```{r}
+df_mvi <- df_mvi %>%
+  select(!c(contains('AbsCellDensity'),'TotPhos'))
+```
+
+## log variables
+
+```{r}
+log_vars <- c(
+  'Chlorophyll',
+  'Pheophytin',
+  'Conductivity',
+  'Turbidity',
+  'DissAmmonia',
+  'DissNitrateNitrite',
+  'DissOrthophos',
+  'DON',
+  'TKN',
+  'DissChloride',
+  'TDS',
+  'SAC',
+  'SJR',
+  'OUT',
+  'EXPORTS',
+  'monreg_biomass',
+  'monreg_graze_rate',
+  'monreg_filt_rate'
+)
+
+df_mvi <- df_mvi %>%
+  mutate(
+    across(
+      all_of(log_vars),
+      log,
+      .names = 'log_{.col}'
+    )
+  ) %>%
+  select(-all_of(log_vars))
+```
+
+## z-score (center & scale)
+
+```{r}
+# exclude rel cel density for now
+df_mvi <- df_mvi %>%
+  mutate(
+    across(
+      where(is.numeric) &
+        !any_of(c(
+          'Year', 'Month', 'Station', 'Survey', 'Season',
+          'Region', 'mvi_class', 'modeled_class'
+        )) &
+        !contains('RelCellDensity'),
+      ~ as.numeric(scale(.x, center = TRUE, scale = TRUE))
+    )
+  )
+```
+
+## refactor classification
+
+```{r}
+df_mvi <- df_mvi %>%
+  mutate(mvi_class = relevel(factor(mvi_class), ref = 'No bloom'))
+```
+
+
+# Model Selection
+
+Assumptions:
+
+- biogeochemically, no predictor's effect should depend on region
+
+- *however*, we interested in difference between regions (ie. subsets of predictor ranges), so we'll run separate models per region
+
+```{r}
+unique(df_mvi$Region)
+```
+
+# Central
+
+## Check stations
+
+```{r}
+df_cen <- df_mvi %>% filter(Region == 'Central')
+```
+
+```{r}
+unique(df_cen$Station)
+```
+
+TODO: plot
+
+# Pick Variables
+
+## Flow
+
+Four flow variables: SAC, SJR, EXPORTS, OUT
+
+Shouldn't use all 4, pick best one or two
+
+I believe there Central is closest to 3 inputs, so some combo of those?
+
+- model with OUT gives overall effect
+
+(And OUT for the other two regions?)
+
+TODO: run both versions: OUT and individual ones
+
+```{r}
+df_cen %>%
+  select(log_SAC, log_SJR, log_EXPORTS) %>%
+  cor(use = 'pairwise') %>% round(2)
+```
+
+All can go in for now...but ideally choose between SAC/SJR.
+
+```{r}
+unique(df_mvi$Region)
+```
+
+
+## Clams
+
+Clams graze biomass, so graze rate is likely most relevant.
+
+## Nutrients
+
+DissAmmonia, DissOrthophos, DissNitrateNitrite make most sense.
+
+```{r}
+nut_vars <- c('log_DissAmmonia', 'log_DissNitrateNitrite', 'log_DissOrthophos',
+              'log_DON', 'log_TKN', 'DissSilica', 'log_TDS', 'log_DissChloride', 'log_Chlorophyll')
+```
+
+```{r}
+cm <- df_cen %>%
+  select(all_of(nut_vars)) %>%
+  cor(use = 'pairwise.complete.obs')
+
+corrplot(cm,
+         method = 'color',
+         type   = 'upper',
+         addCoef.col = 'black',
+         number.cex  = 0.7,
+         tl.col = 'black',
+         tl.srt = 45,
+         diag   = FALSE,
+         order  = 'hclust')
+```
+
+```{r}
+nut_mat <- df_cen %>%
+  select(all_of(nut_vars)) %>%
+  tidyr::drop_na()
+
+pca_nut <- prcomp(nut_mat, center = TRUE, scale. = TRUE)
+```
+
+## Water Related
+
+Chloride/TDS and Calcium aren't related to blooms.
+
+## Solids
+
+Usually caused by blooms I believe? Check literature.
+
+## Initial model
+
+```{r}
+df_cen <- df_cen %>%
+  mutate(mvi_num = as.integer(factor(mvi_class,
+                                     levels = c('No bloom', 'BAB', 'HAB'))) - 1L)
+
+gam_ini <- gam(
+  list(
+    mvi_num ~ s(Temperature) + s(log_Conductivity) +,
+              ~ s(Temperature) + s(log_Conductivity)
+  ),
+  family = multinom(K = 2),
+  select = TRUE, # ridge theoretically, lasso behaviorally (check)
+  data = df_cen
+)
+
+summary(gam_ini)
+plot(gam_ini, pages = 1, scale = 0)
+```
+
+

@@ -1,0 +1,502 @@
+---
+execute:
+  echo: false
+---
+
+Exploratory data analysis for using all data.
+
+TODO: fix using 'modeled'; ignores off season
+- 2015 is when MVI starts
+
+prioritize running 2015-present with BSA, MVI data
+- can run others after for exploratory/comparison purposes
+- **eg. EA (2008-2014) modeled data**
+- eg. same BSA time period w/ modeled data
+  - would need to be clear about the second set of community models (since circular)
+    - can do 'w/o ptox'
+    
+    
+TODO: threshold analysis (with multinomial)
+- 
+
+**QUESTION: What was done with \< RL values??**
+
+# Load Libraries/Data
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(mice)
+library(NADA)
+
+conflicted::conflict_prefer('filter', 'dplyr')
+```
+
+Using `03_cleanlab.Rda`
+
+```{r}
+# load data
+load(here::here('Short Term Analysis/st_data/03_cleandata.Rda'))
+
+# set regions variable
+regions <- unique(df_mvi$Region)
+
+# remove salinity
+df_mvi <- df_mvi %>%
+  select(-Salinity)
+
+# set analytes variable
+analytes <- df_mvi %>%
+  select(Chlorophyll:monreg_filt_rate) %>%
+  names()
+```
+
+Note that this data does not subset for rows with phyto data; ie. this is all data with a Bloom Classification, regardless if it has corresponding phyto data or not (though, with cell density, all do).
+
+# Unique Check
+
+```{r}
+lapply(df_mvi[sapply(df_mvi, \(x) is.character(x) || is.factor(x))], unique)
+```
+## Index Notes
+
+Note: Index is numeric index, not categorical. Adding in categorical for later.
+
+
+```{r}
+unique(df_mvi$Index)
+```
+
+...also, is Index for SAC or SJV? Does that matter for flow variables? Confirmed there's only one index per Water Year
+
+```{r}
+df_mvi <- df_mvi %>%
+  mutate(WaterYear = if_else(as.integer(as.character(Month)) >= 10,
+                             as.integer(as.character(Year)) + 1,
+                             as.integer(as.character(Year))))
+
+df_mvi %>%
+  group_by(WaterYear) %>%
+  summarize(n_index = n_distinct(Index, na.rm = TRUE), .groups = 'drop') %>%
+  filter(n_index > 1)
+```
+Also some NAs, due to missing 2023/2024.
+
+```{r}
+df_mvi %>%
+  filter(is.na(Index)) %>%
+  select(Station, Year) %>%
+  distinct() %>%
+  arrange(Year, Station)
+```
+
+```{r}
+df_mvi <- df_mvi %>%
+  mutate(
+    Index = case_when(
+      Year == 2023 ~ 8.45,
+      Year == 2024 ~ 8.98,
+      TRUE         ~ Index
+    ),
+    Index_Cat = case_when(
+      is.na(Index)  ~ NA_character_,
+      Index >= 9.2  ~ 'W',
+      Index >  7.8  ~ 'AN',
+      Index >  6.5  ~ 'BN',
+      Index >  5.4  ~ 'D',
+      TRUE          ~ 'C'
+    ),
+    Index_Cat = factor(Index_Cat, levels = c('C', 'D', 'BN', 'AN', 'W'))
+  )
+```
+
+# Station/Region Check
+
+## 2015-2024
+
+Per region, which stations have any data per event (Month+Year)?
+
+```{r}
+for (r in regions) {
+
+  plot_df <- df_mvi %>%
+    filter(Region == r) %>%
+    mutate(YearMonth = as.Date(YearMonth)) %>%
+    count(Station, YearMonth, name = 'n_rows') %>%
+    complete(
+      Station,
+      YearMonth = seq.Date(
+        min(YearMonth, na.rm = TRUE),
+        max(YearMonth, na.rm = TRUE),
+        by = 'month'
+      ),
+      fill = list(n_rows = 0)
+    ) %>%
+    mutate(row_exists = n_rows > 0)
+
+  p <- plot_df %>%
+    ggplot(aes(x = YearMonth, y = Station, fill = row_exists)) +
+    geom_tile(color = 'blue') +
+    scale_fill_manual(
+      values = c('FALSE' = 'red', 'TRUE' = 'lightblue')
+    ) +
+    labs(
+      title = r,
+      x = NULL,
+      y = 'Station',
+      fill = 'Row exists'
+    ) +
+    theme_minimal()
+
+  print(p)
+}
+```
+
+
+
+```{r}
+for (r in regions) {
+  first_yearmonth_tbl <- df_mvi %>%
+    filter(Region == r) %>%
+    mutate(YearMonth = as.Date(YearMonth)) %>%
+    group_by(Station) %>%
+    summarize(
+      first_YearMonth = min(YearMonth, na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    arrange(first_YearMonth, Station)
+  
+  print(first_yearmonth_tbl)
+}
+```
+
+**Central**: D28A, MD10A, and P8 can be used (possibly C9, starts about 1 year later though)
+
+**Confluence**: D26 and D19 only (D22, D16, D12 start a bit later; D24 the same time as C9; NZ068 about 6 months after that).
+
+**Suisun Bay**: D8, D7, D6, D4 (D10 starts same time as NZ068).
+
+### Recommendation: Start either 06/01/2016 (exclude two stations) or 05/01/2017 (include all). Only D24 should be completely removed.
+
+TODO: check when 'summer/spring' start.
+
+### Remove stations without enough data
+
+```{r}
+df_mvi <- df_mvi %>%
+  filter(!(Station %in% c('D24')))
+```
+
+### Subset date
+
+TODO: decide
+
+# Central Region
+
+## Data Coverage
+
+```{r}
+df_central_all <- df_mvi %>%
+  filter(Region == 'Central') %>%
+  filter(Station %in% c('D28A', 'MD10A', 'P8'))
+```
+
+```{r}
+for (a in analytes) {
+  p <- df_central_all %>%
+    mutate(missing = is.na(.data[[a]])) %>%
+    ggplot(aes(x = YearMonth, y = Station, fill = missing)) +
+      geom_tile(color = 'blue') +
+      scale_fill_manual(values = c('FALSE' = 'lightblue', 'TRUE' = 'red')) +
+      labs(title = paste0(a, ' - Central'),
+           x = NULL, y = 'Station', fill = 'Missing') +
+      theme_minimal()
+  print(p)
+}
+
+```
+
+### Conclusions
+
+TODO: talk to besty about clam data
+
+DissAmmonia and VSS have large gaps...
+
+But, there should be data...
+
+```{r}
+df_central_all %>%
+  summarize(
+    n = n(),
+    across(all_of(analytes), ~ sum(is.na(.x)))
+  ) %>%
+  pivot_longer(-n, names_to = 'analyte', values_to = 'n_na') %>%
+  mutate(pct_na = round(100 * n_na / n, 1)) %>%
+  arrange(desc(n_na))
+```
+
+
+## ISSUES
+
+### Flow and clams
+
+Missing 2023/2024 data
+
+### Nutrients
+
+Non-detects are being read in as 'NA'.
+
+Need to properly account for censored data. Easiest option: uniform imputation between close-to-0 and reporting limit (should really be done multiple times and pooled, but the impact is likely small, check with sensitivity check; can do for the final analysis; also applies to other imputed values).
+
+For now, will assume all NAs are < RL and that Ammonia's RL was always 0.05. (most properly account for in HABvBAB file (eg. include Detect column), but unable to fully run code).
+
+# Impute Nutrients (< RL)
+
+TODO: rn just DissAmmonia, should add in other relevant nutrients
+
+## Check sensitivity
+
+TODO: right now, assumes same RL for a given nutrient
+
+```{r}
+censor_check <- function(x, rl = 0.05, fl = 0.01, n_draws = 200) {
+
+  nd  <- is.na(x)
+  obs <- ifelse(nd, rl, x)
+
+  draws <- replicate(n_draws,
+    { v <- replace(x, nd, runif(sum(nd), fl, rl)); c(mean(v), sd(v)) })
+
+  ros_vals <- as.data.frame(ros(obs, nd))$modeled
+  km       <- cenfit(obs, nd)
+
+  tibble(
+    method = c('zero', 'half_rl', 'at_rl', 'uniform', 'ros', 'kaplan_meier'),
+    mean = c(mean(replace(x, nd, 0)),
+               mean(replace(x, nd, rl / 2)),
+               mean(replace(x, nd, rl)),
+               mean(draws[1, ]),
+               mean(ros_vals),
+               as.numeric(mean(km)['mean'])),
+    q1 = c(NA, NA, NA, quantile(draws[1, ], 0.025, names = FALSE), NA, NA),
+    q4 = c(NA, NA, NA, quantile(draws[1, ], 0.975, names = FALSE), NA, NA),
+    pct_nd = round(100 * mean(nd), 1)
+  ) %>%
+    mutate(across(c(mean, q1, q4), ~ round(.x, 3)))
+}
+```
+
+```{r}
+rls <- c(DissAmmonia = 0.05, DissNitrateNitrite = 0.05, DissOrthophos = 0.05)
+
+sens_all <- imap_dfr(rls, function(rl, a) {
+  df_mvi %>%
+    group_by(Station) %>%
+    group_modify(~ censor_check(.x[[a]], rl = rl, fl = rl/5)) %>%
+    ungroup() %>%
+    mutate(analyte = a, .before = 1)
+})
+
+sens_all
+```
+
+## Impute
+
+Define all nutrients with < RL values
+
+```{r}
+nutrients <- c(
+  'DissAmmonia',
+  'DissNitrateNitrite',
+  'TotPhos',
+  'DissOrthophos',
+  'DON',
+  'TKN',
+  'DissCalcium',
+  'DissChloride',
+  'DissSilica',
+  'TOC',
+  'DOC',
+  'TDS',
+  'TSS',
+  'VSS',
+  'Chlorophyll',
+  'Pheophytin'
+)
+```
+
+Impute < RL values
+
+TODO: rn, assumes all have 0.05 RL for entire time, and that all missing data is < RL data. THIS IS NOT TRUE; MUST BE FIXED.
+
+```{r}
+# custom mice method: uniform draw between close-to-zero and RL
+mice.impute.unifrl <- function(y, ry, x, wy = NULL, fl = 0.01, rl = 0.05, ...) {
+  if (is.null(wy)) wy <- !ry
+  runif(sum(wy), fl, rl)
+}
+
+# no need to split by station since not conditioned on anything
+meth <- make.method(df_mvi)
+meth[] <- ''
+meth[nutrients] <- 'unifrl'
+
+pred <- make.predictorMatrix(df_mvi)
+pred[] <- 0
+
+imp <- mice(df_mvi, method = meth, predictorMatrix = pred,
+            m = 10, maxit = 1, printFlag = FALSE,
+            fl = 0.01, rl = 0.05)
+```
+
+```{r}
+complete(imp, 'long') %>%
+  group_by(.imp, Station) %>%
+  summarize(mean_amm = mean(DissAmmonia), .groups = 'drop') %>%
+  group_by(Station) %>%
+  summarize(
+    mean = mean(mean_amm),
+    q1 = quantile(mean_amm, 0.025),
+    q4 = quantile(mean_amm, 0.975),
+    .groups = 'drop'
+  ) %>%
+  mutate(across(c(mean, q1, q4), ~ round(.x, 3)))
+```
+
+Check density curves
+
+```{r}
+long_imp <- complete(imp, 'long')
+
+nutrients <- c('DissAmmonia','DissOrthophos')
+
+for (nut in nutrients) {
+
+  d_imp <- long_imp %>% select(.imp, Station, value = all_of(nut))
+  d_obs <- df_mvi   %>% select(Station, value = all_of(nut)) %>% filter(!is.na(value))
+
+  n_lab <- df_mvi %>%
+    group_by(Station) %>%
+    summarize(
+      lab = paste0(first(Station), ' (', sum(!is.na(.data[[nut]])), 'd / ',
+                   sum(is.na(.data[[nut]])), 'nd)'),
+      .groups = 'drop'
+    )
+
+  p <- ggplot(d_imp %>% left_join(n_lab, by = 'Station'),
+              aes(value, group = .imp)) +
+    geom_density(colour = 'red', linewidth = 0.2) +
+    geom_density(data = d_obs %>% left_join(n_lab, by = 'Station'),
+                 aes(value), inherit.aes = FALSE,
+                 colour = 'steelblue', linewidth = 0.8) +
+    facet_wrap(~ lab, scales = 'free') +
+    labs(title = nut, x = nut, y = 'Density') +
+    theme_minimal()
+
+  print(p)
+}
+```
+
+## Add imputed vals to df
+
+```{r}
+# pick one chain
+df_mvi <- complete(imp, 1)
+```
+
+# Impute Nutrients (truly missing)
+
+TODO: add in after this info is known
+
+# Impute Clams
+
+TODO: Right now, running on subset without 2023/2024 (no data)
+
+```{r}
+df_mvisub <- df_mvi %>%
+  filter(!Year %in% c(2023, 2024))
+```
+
+## Sensitivity check
+
+TODO
+
+## Impute
+
+```{r}
+system_vars <- c('monreg_biomass', 'monreg_graze_rate', 'monreg_filt_rate')
+
+predictor_vars <- c(
+  'Year',
+  'Month',
+  'Region',
+  'Temperature',
+  'Conductivity'
+)
+```
+
+```{r}
+df_mice <- df_mvisub %>%
+  mutate(
+    Year   = factor(Year),
+    Month  = factor(Month),
+    Region = factor(Region)
+  ) %>%
+  group_by(Year, Month, Region) %>%
+  summarize(
+    Temperature  = mean(Temperature, na.rm = TRUE),
+    Conductivity = mean(Conductivity, na.rm = TRUE),
+    across(all_of(system_vars), first),
+    .groups = 'drop'
+  )
+
+meth <- make.method(df_mice)
+meth[] <- ''
+meth[system_vars] <- 'pmm'
+
+pred <- make.predictorMatrix(df_mice)
+pred[,] <- 0
+pred[system_vars, c(predictor_vars, system_vars)] <- 1
+diag(pred) <- 0
+
+imp <- mice(
+  df_mice,
+  m       = 20,
+  maxit   = 20,
+  method  = meth,
+  predictorMatrix = pred,
+  seed    = 42
+)
+```
+
+```{r}
+plot(imp)
+```
+
+```{r}
+densityplot(imp)
+stripplot(imp, pch = 20, cex = 0.7)
+```
+
+## Add back in
+
+### TEMP FIX
+
+Subsetting all of mvi to 2022
+
+```{r}
+df_mvi <- df_mvi %>%
+  filter(!Year %in% c(2023, 2024))
+```
+
+
+```{r}
+# pick one chain
+df_mvi <- complete(imp, 1)
+```
+
+# Export
+
+```{r}
+save(df_mvi, file = here::here('Short Term Analysis/st_data/04_imputedata.Rda'))
+```

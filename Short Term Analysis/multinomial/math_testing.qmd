@@ -1,0 +1,331 @@
+
+```{r}
+library(tidyverse)
+library(compositions)
+library(stats)
+library(car)
+library(broom)
+library(nnet)
+library(GGally)
+library(emmeans)
+
+load(here::here('Data/integrated_dataset_2008-2022.Rdata'))
+```
+
+
+# Goal
+
+For three classifications (HAB, BAB, No Bloom), what are their relations with different, non-independent algal groups?
+
+Use relative biovolume as algal group variable (% of sample bv that is that algal group)
+
+Can't put values in directly (correlation issues); use log ratios
+
+Notes:
+- for rn, no true data exploration phase
+- for rn, didn't deal with station or temporal correlation
+
+# Read in data
+
+```{r}
+# df_cen <- dat %>%
+#   filter(Region == 'Central')
+df_cen <- dat
+
+df_cen <- df_cen %>%
+  select(Month, Year, Station, AlgalGroup, tot_bio, relative_biovolume, harmful_class) %>%
+  filter(!is.na(relative_biovolume)) %>%
+  filter(!is.na(harmful_class))
+
+focal_groups <- c('Cyanobacteria', 'Centric Diatoms', 'Pennate Diatoms',
+                  'Cryptophytes', 'Green Algae')
+
+df_cen <- df_cen %>%
+    mutate(group = if_else(AlgalGroup %in% focal_groups, AlgalGroup, 'Other'))
+```
+
+# Multinomial 
+
+```{r}
+df_wide <- df_cen %>%
+  group_by(Year, Month, Station, tot_bio, harmful_class, group) %>%
+  summarise(biovolume = sum(relative_biovolume, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = group, values_from = biovolume, values_fill = 0)
+
+focal_groups <- c('Cyanobacteria', 'CentricDiatoms', 'PennateDiatoms',
+                  'Cryptophytes', 'GreenAlgae')
+
+df_wide <- df_wide %>%
+  rename(CentricDiatoms = `Centric Diatoms`,
+         PennateDiatoms = `Pennate Diatoms`,
+         GreenAlgae = `Green Algae`)
+
+comp_cols <- c(focal_groups, 'Other')
+
+sbp <- matrix(c(
+   1,  0,  0,  0, # cyano; cyano vs all
+  -1,  1,  1,  0, # centric; diatoms vs crypt/green
+  -1,  1, -1,  0, # pennate; centric vs pennate
+  -1, -1,  0,  1, # crypto; crypto vs green
+  -1, -1,  0, -1  # green
+), nrow = 5, ncol = 4, byrow = TRUE,
+dimnames = list(
+  c('Cyanobacteria', 'CentricDiatoms', 'PennateDiatoms',
+    'Cryptophytes', 'GreenAlgae'),
+  c('b1_cyano_vs_rest', 'b2_diatoms_vs_cg',
+    'b3_centric_vs_pennate', 'b4_crypto_vs_green')
+))
+
+comp_closed <- acomp(df_wide[, rownames(sbp)])
+
+V <- gsi.buildilrBase(sbp)
+ilr_coords <- ilr(comp_closed, V = V)
+colnames(ilr_coords) <- colnames(sbp)
+
+df_model <- bind_cols(
+  df_wide %>% select(Year, Month, Station, tot_bio, harmful_class),
+  as.data.frame(ilr_coords),
+  log_tot_bio = log(df_wide$tot_bio)
+)
+
+df_model <- df_model %>%
+  mutate(log_tot_bio = log_tot_bio - mean(log_tot_bio, na.rm = TRUE))
+```
+
+```{r}
+df_model$harmful_class <- relevel(factor(df_model$harmful_class), ref = 'No bloom')
+
+fit_multi <- nnet::multinom(harmful_class ~ b1_cyano_vs_rest + b2_diatoms_vs_cg +
+                                      b3_centric_vs_pennate + b4_crypto_vs_green +
+                                      log_tot_bio,
+                      data = df_model)
+
+tidy(fit_multi) 
+```
+
+```{r}
+df_model$harmful_class <- relevel(factor(df_model$harmful_class), ref = 'BAB')
+
+fit_bab <- nnet::multinom(harmful_class ~ b1_cyano_vs_rest + b2_diatoms_vs_cg +
+                                    b3_centric_vs_pennate + b4_crypto_vs_green +
+                                    log_tot_bio,
+                    data = df_model)
+tidy(fit_bab)
+```
+
+
+```{r}
+vars <- c('b1_cyano_vs_rest', 'b2_diatoms_vs_cg',
+          'b3_centric_vs_pennate', 'b4_crypto_vs_green', 'log_tot_bio')
+
+all_trends <- map_dfr(vars, function(v) {
+  emtrends(fit_multi, ~ harmful_class, var = v, mode = 'prob') %>%
+    summary(infer = TRUE) %>%
+    as.data.frame() %>%
+    rename(trend = 2) %>%
+    mutate(variable = v)
+})
+
+all_trends
+```
+
+
+# Two binomials
+
+```{r}
+df_model <- df_model %>%
+  mutate(
+    bloom = factor(if_else(harmful_class == 'No bloom', 'No bloom', 'Bloom')),
+    hab_bab = factor(if_else(harmful_class == 'HAB', 'HAB', 'BAB'))
+  )
+
+df_model$bloom <- relevel(df_model$bloom, ref = 'No bloom')
+
+fit_pt1 <- glm(bloom ~ b1_cyano_vs_rest + b2_diatoms_vs_cg +
+                           b3_centric_vs_pennate + b4_crypto_vs_green +
+                           log_tot_bio,
+                  data = df_model,
+                  family = binomial(link = 'logit'))
+
+summary(fit_pt1)
+
+df_bloom <- df_model %>% filter(bloom == 'Bloom')
+
+fit_pt2 <- glm(hab_bab ~ b1_cyano_vs_rest + b2_diatoms_vs_cg +
+                                b3_centric_vs_pennate + b4_crypto_vs_green +
+                                log_tot_bio,
+                  data = df_bloom,
+                  family = binomial(link = 'logit'))
+
+summary(fit_pt2)
+```
+
+# Not ILR Example
+
+```{r}
+df_alt <- df_wide %>%
+  mutate(
+    bloom = factor(if_else(harmful_class == 'No bloom', 'No bloom', 'Bloom')),
+    hab_bab = factor(if_else(harmful_class == 'HAB', 'HAB', 'BAB')),
+    log_tot_bio = log(tot_bio) - mean(log(tot_bio), na.rm = TRUE))
+
+fit_alt1 <- glm(bloom ~ Cyanobacteria + CentricDiatoms + Cryptophytes +
+                  PennateDiatoms + GreenAlgae + log_tot_bio,
+                  data = df_alt,
+                  family = binomial(link = 'logit'))
+
+summary(fit_alt1)
+
+df_altbloom <- df_alt %>% filter(bloom == 'Bloom')
+
+fit_alt2 <- glm(hab_bab ~ Cyanobacteria + CentricDiatoms + Cryptophytes +
+                  PennateDiatoms + GreenAlgae + log_tot_bio,
+                  data = df_altbloom,
+                  family = binomial(link = 'logit'))
+
+summary(fit_alt2)
+```
+
+```{r}
+df_alt$harmful_class <- relevel(factor(df_model$harmful_class), ref = 'No bloom')
+
+fit_altmulti <- multinom(harmful_class ~ Cyanobacteria + CentricDiatoms +
+                        Cryptophytes + PennateDiatoms + GreenAlgae +
+                        log_tot_bio,
+                      data = df_alt)
+
+tidy(fit_altmulti) 
+```
+
+```{r}
+vif(fit_altmulti)
+```
+
+
+
+```{r}
+vif(fit_multi)
+```
+
+# Exploratory Graphs
+
+```{r}
+table(df_model$harmful_class)
+```
+
+```{r}
+df_alt %>%
+  pivot_longer(c(Cyanobacteria, CentricDiatoms, PennateDiatoms,
+                 Cryptophytes, GreenAlgae, log_tot_bio),
+               names_to = 'variable', values_to = 'value') %>%
+  ggplot(aes(value, fill = harmful_class, color = harmful_class)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~ variable, scales = 'free') +
+  theme_minimal()
+```
+
+# GAM Example
+
+```{r}
+library(mgcv)
+df_gam <- df_model
+df_gam$harmful_class <- relevel(factor(df_model$harmful_class), ref = 'No bloom')
+df_gam$hc_int <- as.integer(df_model$harmful_class) - 1
+
+levels(df_gam$harmful_class)
+
+fit_gam <- gam(
+  list(
+    hc_int ~ s(b1_cyano_vs_rest) + s(b2_diatoms_vs_cg) +
+             s(b3_centric_vs_pennate) + s(b4_crypto_vs_green) + s(log_tot_bio),
+    ~ s(b1_cyano_vs_rest) + s(b2_diatoms_vs_cg) +
+      s(b3_centric_vs_pennate) + s(b4_crypto_vs_green) + s(log_tot_bio)
+  ),
+  family = multinom(K = 2),
+  data = df_gam
+)
+
+summary(fit_gam)
+```
+
+```{r}
+plot(fit_gam)
+```
+
+# ILR/Raw Comparsion
+
+```{r}
+sbp2 <- matrix(c(
+  -1, -1,  0, -1, # green; green vs all
+  -1,  1,  1,  0, # centric; diatoms vs crypt/green
+  -1,  1, -1,  0, # pennate; centric vs pennate
+  -1, -1,  0,  1, # crypto; crypto vs green
+   1,  0,  0,  0  # cyano
+), nrow = 5, ncol = 4, byrow = TRUE,
+dimnames = list(
+  c('Cyanobacteria', 'CentricDiatoms', 'PennateDiatoms',
+    'Cryptophytes', 'GreenAlgae'),
+  c('b1_green_vs_rest', 'b2_diatoms_vs_cg',
+    'b3_centric_vs_pennate', 'b4_crypto_vs_cyano')
+))
+
+comp_closed2 <- acomp(df_wide[, rownames(sbp2)])
+
+V2 <- gsi.buildilrBase(sbp2)
+ilr_coords2 <- ilr(comp_closed2, V = V2)
+colnames(ilr_coords2) <- colnames(sbp2)
+
+df_model2 <- bind_cols(
+  df_wide %>% select(Year, Month, Station, tot_bio, harmful_class),
+  as.data.frame(ilr_coords2),
+  log_tot_bio = log(df_wide$tot_bio)
+)
+
+df_model2 <- df_model2 %>%
+  mutate(log_tot_bio = log_tot_bio - mean(log_tot_bio, na.rm = TRUE))
+```
+
+```{r}
+df_model2$harmful_class <- relevel(factor(df_model$harmful_class), ref = 'No bloom')
+
+fit_multi2 <- nnet::multinom(harmful_class ~ b1_green_vs_rest + b2_diatoms_vs_cg +
+                                      b3_centric_vs_pennate + b4_crypto_vs_cyano +
+                                      log_tot_bio,
+                      data = df_model2)
+
+tidy(fit_multi2) 
+```
+
+# PCA Checks
+
+```{r}
+comp_clr <- clr(comp_closed)
+
+pca <- prcomp(comp_clr, center = TRUE, scale. = FALSE)
+
+summary(pca)
+
+round(pca$rotation, 3)
+```
+
+
+```{r}
+scores <- as.data.frame(pca$x)
+scores$harmful_class <- df_model$harmful_class
+
+ggplot(scores, aes(PC1, PC2, color = harmful_class)) +
+  geom_point(alpha = 0.6) +
+  labs(x = paste0('PC1 (', round(100*summary(pca)$importance[2,1],1), '%)'),
+       y = paste0('PC2 (', round(100*summary(pca)$importance[2,2],1), '%)')) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(scores, aes(PC1, PC2)) +
+  geom_density_2d(aes(color = harmful_class), linewidth = 0.4) +
+  labs(x = paste0('PC1 (', round(100*summary(pca)$importance[2,1],1), '%)'),
+       y = paste0('PC2 (', round(100*summary(pca)$importance[2,2],1), '%)')) +
+  theme_minimal()
+```
+
+

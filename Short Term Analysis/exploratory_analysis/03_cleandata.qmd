@@ -1,0 +1,110 @@
+After a closer look at the phytoplankton data, decided to work with subsets. We will create all our subsets here.
+
+"dat": has community and WQ data and a HAB/BAB classification
+- but if they had an MVI but not community data, not in dat
+
+
+# Load libraries/data
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+Using `01_afterlab.Rda`
+
+```{r}
+# load data
+load(here::here('Short Term Analysis/st_data/01_afterlab.Rda'))
+```
+
+# Clean Data
+
+Remove data with no Bloom Classification at all (only 8 rows)
+
+```{r}
+df_cells <- df_cells %>%
+  filter(!is.na(mvi_class))
+```
+
+Rename "NA" to "No Bloom".
+
+```{r}
+df_cells <- df_cells %>%
+  mutate(
+    modeled_class = case_when(
+      is.na(modeled_class) ~ 'No bloom',
+      TRUE ~ modeled_class
+    )
+  )
+```
+
+Add `YearMonth` column (YYYY-MM-01).
+
+```{r}
+df_cells <- df_cells %>%
+  mutate(
+    YearMonth = as.Date(sprintf('%s-%02d-01', Year, Month))
+  ) %>%
+  relocate(YearMonth, .before = Date)
+```
+
+Combine Turbidities
+
+```{r}
+# check no overlap
+df_cells %>%
+  summarize(n_overlap = sum(!is.na(TurbidityNTU) & !is.na(TurbidityFNU)))
+
+# combine
+df_cells <- df_cells %>%
+  mutate(Turbidity = coalesce(TurbidityNTU, TurbidityFNU)) %>%
+  select(-TurbidityNTU, -TurbidityFNU) %>%
+  relocate(Turbidity, .after = Conductivity)
+```
+
+Remove analytes with \> 70% NA
+
+```{r}
+df_cells <- df_cells %>%
+  select(-c(DissBromide, TON, TotChloride, DissolvedOxygenPercent))
+```
+
+Remove colinear analytes
+
+```{r}
+# Secchi ~ Turbidity; light availability
+
+df_cells <- df_cells %>%
+  select(-c(Secchi))
+```
+
+# Save Data
+
+```{r}
+save(df_cells, file = here::here('Short Term Analysis/st_data/03_cleandata.Rda'))
+```
+
+# Subset: MVI only
+
+Filter to year >= 2015 (when MVI started)
+
+```{r}
+df_mvi <- df_cells %>%
+  filter(Year >= 2015 & Lab == 'BSA')
+```
+
+```{r}
+save(df_mvi, file = here::here('Short Term Analysis/st_data/03_cleandata.Rda'))
+```
+
+# Full: Environmental Data
+
+Use all environmental data, regardless if there's corresponding phytoplankton data or not (with cell density, this is not an issue).
+
+```{r}
+df_full <- df_cells %>%
+  select(-modeled)
+
+lapply(df_full[sapply(df_full, \(x) is.character(x) || is.factor(x))], unique)
+```

@@ -1,0 +1,775 @@
+# Load libraries/data
+
+```{r}
+library(vegan)
+library(tidyverse)
+library(lubridate)
+library(compositions)
+```
+
+Using base dataset (integrated_dataset_2008-2022.Rdata)
+
+```{r}
+# load data
+load(here::here('Data/integrated_dataset_2008-2024.Rdata'))
+
+# remove entirely duplicated rows
+dat <- distinct(dat)
+
+# remove basically duplicated rows (mvi_class and modeled class are NA)
+dat <- dat %>%
+  filter(!(is.na(mvi_class) & is.na(modeled_prob_harmful)))
+
+# remove spaces in Algal Group names
+dat <- dat %>%
+  mutate(AlgalGroup = str_remove_all(AlgalGroup, '\\s+'))
+
+# remove LSZs
+dat <- dat %>%
+  filter(!(Station %in% c('LSZ2','LSZ6','LSZ2-SJR','LSZ6-SJR')))
+
+# use only Count Method == 'field'
+dat <- dat %>%
+  filter(!(Survey %in% 'DWR-EMP' & CountMethodTaxa %in% c('transect','halfchamber')))
+
+df_test <- dat %>% select(Year, Month, Region, Station, SAC)
+```
+
+# Basic Checks
+
+## Unique values
+
+```{r}
+lapply(dat[sapply(dat, \(x) is.character(x) || is.factor(x))], unique)
+```
+
+Notice issues with Labs/Surveys:
+
+- USGS-BP and DWR-EMP don't have overlapping, comparable metadata according to PESP, but can check for relevant stations
+
+- Lab's aren't comparable, but can check in context of presence/absence data specifically
+
+# Lab Checks
+
+## Check lab timelines
+
+```{r}
+df_lab_plot <- dat %>%
+  filter(!is.na(Lab), !is.na(Year), !is.na(Month)) %>%
+  distinct(Year, Month, Lab) %>%
+  group_by(Year, Month) %>%
+  summarize(
+    Lab = paste(sort(unique(Lab)), collapse = ' + '),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Year = factor(Year, levels = sort(unique(Year), decreasing = TRUE)),
+    Month = factor(Month, levels = 1:12)
+  )
+
+ggplot(df_lab_plot, aes(x = Month, y = Year, fill = Lab)) +
+  geom_tile(color = 'blue') +
+  scale_fill_manual(
+    values = c(
+      'BSA' = 'lightblue',
+      'EcoAnalysts' = 'orange',
+      'Dick Dufford' = 'purple',
+      'BSA + EcoAnalysts' = 'green',
+      'BSA + Dick Dufford' = 'pink',
+      'Dick Dufford + EcoAnalysts' = 'yellow',
+      'BSA + Dick Dufford + EcoAnalysts' = 'gray70'
+    ),
+    drop = FALSE
+  ) +
+  labs(
+    x = 'Month',
+    y = 'Year',
+    fill = 'Lab'
+  ) +
+  theme_minimal()
+```
+
+## Check which stations are which labs
+
+```{r}
+dat %>%
+  distinct(Station, Lab, Date) %>%
+  count(Station, Lab, name = 'n_events') %>%
+  pivot_wider(
+    names_from = Lab,
+    values_from = n_events,
+    values_fill = 0
+  ) %>%
+  arrange(Station)
+```
+
+Subset Data
+
+```{r}
+lab_checks <- dat %>%
+  select(
+    Survey:Cells_per_mL,
+    tot_cells,
+    modeled_prob_harmful
+  )
+
+# check duplicates
+dup_check <- lab_checks %>%
+  filter(!is.na(Cells_per_mL)) %>%
+  count(Survey, Station, Lab, Year, Month, AlgalGroup) %>%
+  filter(n > 1)
+
+dup_check
+
+# remove Dick Dufford
+lab_checks <- lab_checks %>%
+  filter(Lab != 'Dick Dufford')
+```
+
+Consolidate 'Other' Taxa
+
+```{r}
+pa_cols_o <- c(
+  'Cyanobacteria',
+  'CentricDiatoms',
+  'PennateDiatoms',
+  'Cryptophytes',
+  'GreenAlgae',
+  'Other'
+)
+
+core_cols <- c(
+  'Survey',
+  'Station',
+  'Lab',
+  'Year',
+  'Month',
+  'tot_cells'
+)
+
+df_wide_pa <- lab_checks %>%
+  filter(!is.na(Cells_per_mL), !is.na(AlgalGroup)) %>%
+  mutate(
+    AlgalGroup = if_else(AlgalGroup %in% pa_cols_o, AlgalGroup, 'Other')
+  )
+
+
+df_wide_pa <- df_wide_pa %>%
+  group_by(Survey, Station, Lab, Year, Month, AlgalGroup, tot_cells) %>%
+  summarize(
+    Cells_per_mL = sum(Cells_per_mL, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(
+    id_cols = c(Survey, Station, Lab, Year, Month, tot_cells),
+    names_from = AlgalGroup,
+    values_from = Cells_per_mL,
+    values_fill = 0
+  ) %>%
+  mutate(across(all_of(pa_cols_o), ~ as.integer(.x > 0)))
+```
+
+## PCoA w/ Other
+
+```{r}
+df_pcoa_o <- df_wide_pa %>%
+  mutate(
+    across(all_of(pa_cols_o), ~ replace_na(as.integer(.x), 0L)),
+    n_present = rowSums(across(all_of(pa_cols_o)))
+  ) %>%
+  filter(n_present > 0)
+
+pa_mat_o <- df_pcoa_o %>%
+  select(all_of(pa_cols_o)) %>%
+  as.data.frame()
+
+d_jac_o <- vegdist(
+  pa_mat_o,
+  method = 'jaccard',
+  binary = TRUE
+)
+
+pcoa_o <- wcmdscale(
+  d_jac_o,
+  k = 2,
+  eig = TRUE
+)
+
+scores_pcoa_o <- as.data.frame(pcoa_o$points)
+colnames(scores_pcoa_o)[1:2] <- c('PCoA1', 'PCoA2')
+
+scores_pcoa_o <- scores_pcoa_o %>%
+  select(PCoA1, PCoA2) %>%
+  bind_cols(
+    df_pcoa_o %>%
+      select(all_of(core_cols), all_of(pa_cols_o))
+  )
+```
+
+```{r}
+eig_o <- pcoa_o$eig
+
+axis_var <- tibble(
+  axis = paste0('PCoA', seq_along(eig_o)),
+  eigenvalue = eig_o
+) %>%
+  filter(eigenvalue > 0) %>%
+  mutate(percent = 100 * eigenvalue / sum(eigenvalue))
+
+p1_o <- round(axis_var$percent[1], 1)
+p2_o <- round(axis_var$percent[2], 1)
+
+scores_count_o <- scores_pcoa_o %>%
+  group_by(Lab, across(all_of(pa_cols_o))) %>%
+  summarize(
+    PCoA1 = mean(PCoA1),
+    PCoA2 = mean(PCoA2),
+    n = n(),
+    .groups = 'drop'
+  ) %>%
+  group_by(Lab) %>%
+  mutate(
+    n_lab = sum(n),
+    prop = n / n_lab
+  ) %>%
+  ungroup()
+
+ggplot(scores_count_o, aes(PCoA1, PCoA2, color = Lab, size = prop)) +
+  geom_point(alpha = 0.9, shape = 21, fill = NA, stroke = 1.2, aes(color = Lab)) +
+  scale_size_area(max_size = 8, labels = scales::percent) +
+  coord_fixed() +
+  labs(
+    title = 'Presence/absence of algal groups (w Other)',
+    x = paste0('PCoA1 (', p1_o, '%)'),
+    y = paste0('PCoA2 (', p2_o, '%)'),
+    color = 'Lab',
+    size = '% of lab samples'
+  ) +
+  theme_minimal()
+```
+
+## PCOA w/o Other
+
+```{r}
+pa_cols_wo <- c(
+  'Cyanobacteria',
+  'CentricDiatoms',
+  'PennateDiatoms',
+  'Cryptophytes',
+  'GreenAlgae'
+)
+
+df_pcoa_wo <- df_wide_pa %>%
+  mutate(
+    across(all_of(pa_cols_wo), ~ replace_na(as.integer(.x), 0L)),
+    n_present = rowSums(across(all_of(pa_cols_wo)))
+  ) %>%
+  filter(n_present > 0)
+
+pa_mat_wo <- df_pcoa_wo %>%
+  select(all_of(pa_cols_wo)) %>%
+  as.data.frame()
+
+d_jac_wo <- vegdist(
+  pa_mat_wo,
+  method = 'jaccard',
+  binary = TRUE
+)
+
+pcoa_wo <- wcmdscale(
+  d_jac_wo,
+  k = 2,
+  eig = TRUE
+)
+
+scores_pcoa_wo <- as.data.frame(pcoa_wo$points)
+colnames(scores_pcoa_wo)[1:2] <- c('PCoA1', 'PCoA2')
+
+scores_pcoa_wo <- scores_pcoa_wo %>%
+  select(PCoA1, PCoA2) %>%
+  bind_cols(
+    df_pcoa_wo %>%
+      select(all_of(core_cols), all_of(pa_cols_wo))
+  )
+```
+
+```{r}
+eig_wo <- pcoa_wo$eig
+
+axis_var <- tibble(
+  axis = paste0('PCoA', seq_along(eig_wo)),
+  eigenvalue = eig_wo
+) %>%
+  filter(eigenvalue > 0) %>%
+  mutate(percent = 100 * eigenvalue / sum(eigenvalue))
+
+p1_wo <- round(axis_var$percent[1], 1)
+p2_wo <- round(axis_var$percent[2], 1)
+
+scores_count_wo <- scores_pcoa_wo %>%
+  group_by(Lab, across(all_of(pa_cols_wo))) %>%
+  summarize(
+    PCoA1 = mean(PCoA1),
+    PCoA2 = mean(PCoA2),
+    n = n(),
+    .groups = 'drop'
+  ) %>%
+  group_by(Lab) %>%
+  mutate(
+    n_lab = sum(n),
+    prop = n / n_lab
+  ) %>%
+  ungroup()
+
+ggplot(scores_count_wo, aes(PCoA1, PCoA2, color = Lab, size = prop)) +
+  geom_point(alpha = 0.9, shape = 21, fill = NA, stroke = 1.2, aes(color = Lab)) +
+  scale_size_area(max_size = 8, labels = scales::percent) +
+  coord_fixed() +
+  labs(
+    title = 'Presence/absence of algal groups (w/o Other)',
+    x = paste0('PCoA1 (', p1_wo, '%)'),
+    y = paste0('PCoA2 (', p2_wo, '%)'),
+    color = 'Lab',
+    size = '% of lab samples'
+  ) +
+  theme_minimal()
+```
+
+## Detection frequency
+
+```{r}
+df_wide_pa %>%
+  group_by(Lab) %>%
+  summarize(
+    n_samples = n(),
+    across(all_of(pa_cols_o), ~ mean(.x, na.rm = TRUE)),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(
+    cols = all_of(pa_cols_o),
+    names_to = 'Group',
+    values_to = 'prop_present'
+  ) %>%
+  ggplot(aes(Group, prop_present, fill = Lab)) +
+  geom_col(position = 'dodge') +
+  labs(
+    title = 'Detection frequency',
+    x = 'Algal group',
+    y = 'samps w/ group',
+    fill = 'Lab'
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Number of samples per lab
+
+```{r}
+df_wide_pa %>%
+  count(Lab, name = 'n_rows')
+```
+
+Different labs seem to matter
+
+# Survey Checks
+
+Filtering down to BSA data, do further method differences matter?
+
+## Check method differences
+
+```{r}
+dat %>%
+  filter(Lab == 'BSA') %>%
+  group_by(Station) %>%
+  summarize(
+    SampleMethod = paste(sort(unique(SampleMethod)), collapse = ', '),
+    CountMethodSample = paste(sort(unique(CountMethodSample)), collapse = ', '),
+    Magnification = paste(sort(unique(Magnification)), collapse = ', '),
+    .groups = 'drop'
+  ) %>%
+  arrange(Station)
+```
+
+## PCA Plots
+
+Subset data
+
+```{r}
+surv_checks <- dat %>%
+  select(
+    Survey:AlgalGroup,
+    relative_cell_density,
+    tot_cells,
+    mvi_class
+  ) %>%
+  filter(Lab == 'BSA')
+
+# check no duplicates per event; looks good
+event_check <- surv_checks %>%
+  filter(!is.na(relative_cell_density), !is.na(AlgalGroup)) %>%
+  group_by(Survey, Station, Lab, Year, Month) %>%
+  summarize(
+    n_tot_cells = n_distinct(tot_cells, na.rm = FALSE),
+    tot_cells_values = paste(unique(tot_cells), collapse = ', '),
+    n_mvi_class = n_distinct(mvi_class, na.rm = FALSE),
+    mvi_class_values = paste(unique(mvi_class), collapse = ', '),
+    .groups = 'drop'
+  ) %>%
+  filter(n_tot_cells > 1 | n_mvi_class > 1)
+```
+
+Pivot data
+
+```{r}
+pa_cols_o <- c(
+  'Cyanobacteria',
+  'CentricDiatoms',
+  'PennateDiatoms',
+  'Cryptophytes',
+  'GreenAlgae',
+  'Other'
+)
+
+df_wide_count <- surv_checks %>%
+  filter(!is.na(relative_cell_density), !is.na(AlgalGroup)) %>%
+  mutate(
+    AlgalGroup = if_else(AlgalGroup %in% pa_cols_o, AlgalGroup, 'Other')
+  ) %>%
+  group_by(Survey, Station, Lab, Year, Month, AlgalGroup, tot_cells, mvi_class) %>%
+  summarize(
+    relative_cell_density = sum(relative_cell_density, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(
+    id_cols = c(Survey, Station, Lab, Year, Month, tot_cells, mvi_class),
+    names_from = AlgalGroup,
+    values_from = relative_cell_density,
+    values_fill = 0
+  )
+```
+
+```{r}
+comp_mat <- df_wide_count %>%
+  select(all_of(pa_cols_o)) %>%
+  as.matrix()
+
+comp_mat <- comp_mat[rowSums(comp_mat) > 0, ]
+
+comp_closed <- comp_mat / rowSums(comp_mat)
+
+comp_closed[comp_closed == 0] <- 0.000001
+comp_closed <- comp_closed / rowSums(comp_closed)
+
+comp_clr <- clr(comp_closed)
+
+pca <- prcomp(comp_clr, center = TRUE, scale. = FALSE)
+
+summary(pca)
+
+round(pca$rotation, 3)
+```
+
+```{r}
+scores <- as.data.frame(pca$x)
+scores$mvi_class <- df_wide_count$mvi_class
+scores$survey <- df_wide_count$Survey
+
+ggplot(scores, aes(PC1, PC2, color = survey)) +
+  geom_point(alpha = 0.6) +
+  labs(x = paste0('PC1 (', round(100*summary(pca)$importance[2,1],1), '%)'),
+       y = paste0('PC2 (', round(100*summary(pca)$importance[2,2],1), '%)')) +
+  theme_minimal()
+```
+
+```{r}
+scores <- as.data.frame(pca$x)
+scores$mvi_class <- df_wide_count$mvi_class
+scores$survey <- df_wide_count$Survey
+
+ggplot(scores, aes(PC1, PC2, color = mvi_class)) +
+  geom_point(alpha = 0.6) +
+  labs(x = paste0('PC1 (', round(100*summary(pca)$importance[2,1],1), '%)'),
+       y = paste0('PC2 (', round(100*summary(pca)$importance[2,2],1), '%)')) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(scores, aes(PC1, PC2)) +
+  geom_density_2d(aes(color = survey), linewidth = 0.4) +
+  labs(x = paste0('PC1 (', round(100*summary(pca)$importance[2,1],1), '%)'),
+       y = paste0('PC2 (', round(100*summary(pca)$importance[2,2],1), '%)')) +
+  theme_minimal()
+```
+
+```{r}
+det_freq <- df_wide_count %>%
+  group_by(Survey) %>%
+  summarize(
+    n_samples = n(),
+    across(all_of(pa_cols_o), ~ mean(.x > 0, na.rm = TRUE) * 100),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(
+    cols = all_of(pa_cols_o),
+    names_to = 'Group',
+    values_to = 'detection_freq'
+  )
+```
+
+## Bar Graph
+
+```{r}
+ggplot(det_freq, aes(Group, detection_freq, fill = Survey)) +
+  geom_col(position = 'dodge') +
+  labs(
+    title = 'Detection frequency',
+    x = 'Algal group',
+    y = 'Samples with group present (%)',
+    fill = 'Survey'
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Might be real, but might just be different sites. Feel okay keeping as-is.
+
+# Format Export Data
+
+Format/subset data for further exploratory and data analysis.
+
+Starting from `dat` to be careful. Data saved in 'Short Term Analysis/st_data'
+
+## Bottom and other random data
+
+Remove bottom data, since it's not used. Also sample depth, 89% NA
+
+```{r}
+df_export <- dat %>%
+  select(-contains('_Bottom')) %>%
+  select(-c(Sample_depth_surface, Sample_depth_nutr_surface))
+```
+
+## Lab Metadata
+
+Can remove (figured it out here) *except* for Lab
+
+```{r}
+df_export <- df_export %>%
+  select(-c(CountMethodSample, CountMethodTaxa, Magnification, SampleMethod, DepthType))
+```
+
+## Dufford Lab
+
+Fully overlaps with BSA, can remove
+
+```{r}
+df_export <- df_export %>%
+  filter(Lab != 'Dick Dufford')
+
+unique(df_export$Lab)
+```
+
+## Clams
+
+Only a few sites have clams, so used monthly regional averages. Subset out the original data.
+
+Also, make it more clear the monthly rates are regional averages.
+
+```{r}
+df_export <- df_export %>%
+  rename(monreg_biomass = monthly_biomass,
+         monreg_graze_rate = monthly_grazing_rate,
+         monreg_filt_rate = monthly_filtration_rate)
+
+colnames(df_export)
+```
+
+## Cell Density
+
+We've decided to use `cells` as the unit for density. Removing Unit/Bio columns
+
+```{r}
+df_export <- df_export %>%
+  select(-c(Biovolume_per_mL, Units_per_mL, tot_bio, tot_units, relative_biovolume, relative_unit_density))
+```
+
+Aside from AlgalGroup, relative_cell_density, and Cells_per_mL, every value should be the same per event (Station/Date/Lab). Check this.
+
+```{r}
+event_cols <- c('Station', 'Date', 'Lab')
+
+vary_cols <- c(
+  'AlgalGroup',
+  'relative_cell_density',
+  'Cells_per_mL'
+)
+
+check_cols <- setdiff(names(df_export), c(event_cols, vary_cols))
+
+event_check <- df_export %>%
+  group_by(across(all_of(event_cols))) %>%
+  summarize(
+    across(
+      all_of(check_cols),
+      ~ n_distinct(.x, na.rm = FALSE)
+    ),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(
+    cols = all_of(check_cols),
+    names_to = 'column',
+    values_to = 'n_distinct'
+  ) %>%
+  filter(n_distinct > 1)
+
+event_check
+```
+
+Since this is true, we can pivot wider.
+
+## Check Number of Events
+
+First, check the number of distinct events; this is the number of rows the dataframe should have in the end.
+
+```{r}
+event_cols <- c('Station', 'Date', 'Lab')
+
+df_events <- df_export %>%
+  distinct(across(all_of(event_cols)))
+
+n_events <- nrow(df_events)
+
+n_events
+```
+
+## Check No Phyto Data
+
+First, though, we check which rows (if any) don't have corresponding phyto data.
+
+Using Cell Density, it appears all rows have some data (this is not true for Unit/Biovolume Density).
+
+```{r}
+df_export <- df_export %>%
+  rename(
+    RelCellDensity = relative_cell_density,
+    AbsCellDensity = Cells_per_mL
+  )
+```
+
+```{r}
+event_cols <- c('Station', 'Date', 'Lab')
+
+df_export %>%
+  group_by(across(all_of(event_cols))) %>%
+  summarize(
+    n_rows = n(),
+    n_nonmissing = sum(!is.na(RelCellDensity)),
+    n_positive = sum(RelCellDensity > 0, na.rm = TRUE),
+    all_na = all(is.na(RelCellDensity) | RelCellDensity == 0),
+    .groups = 'drop'
+  ) %>%
+  filter(all_na)
+```
+
+## Pivot Algal Groups
+
+Consolidating less relevant algal groups into 'other' category.
+
+```{r}
+alg_cols <- c(
+  'Cyanobacteria',
+  'CentricDiatoms',
+  'PennateDiatoms',
+  'Cryptophytes',
+  'GreenAlgae',
+  'Other'
+)
+
+other_groups <- df_export %>%
+  filter(!is.na(AlgalGroup), !AlgalGroup %in% alg_cols) %>%
+  distinct(OtherGroup = AlgalGroup) %>%
+  arrange(OtherGroup)
+
+other_groups
+```
+
+```{r}
+# define distinct events
+id_cols <- setdiff(
+  names(df_export),
+  c('AlgalGroup', 'RelCellDensity', 'AbsCellDensity')
+)
+
+df_events <- df_export %>%
+  distinct(across(all_of(id_cols)))
+
+# populate for events w/ phyto data
+df_alg_wide <- df_export %>%
+  filter(!is.na(AlgalGroup)) %>%
+  mutate(
+    AlgalGroup = if_else(AlgalGroup %in% alg_cols, AlgalGroup, 'Other')
+  ) %>%
+  group_by(across(all_of(id_cols)), AlgalGroup) %>%
+  summarize(
+    RelCellDensity = if (all(is.na(RelCellDensity))) NA_real_ else sum(RelCellDensity, na.rm = TRUE),
+    AbsCellDensity = if (all(is.na(AbsCellDensity))) NA_real_ else sum(AbsCellDensity, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(
+    id_cols = all_of(id_cols),
+    names_from = AlgalGroup,
+    values_from = c(RelCellDensity, AbsCellDensity),
+    values_fill = 0,
+    names_glue = '{.value}_{AlgalGroup}'
+  )
+
+# join w/ events w/o phyto data
+df_full_export <- df_events %>%
+  left_join(df_alg_wide, by = id_cols)
+```
+
+## Check Rows
+
+Row total should equal the number of events (2098).
+
+```{r}
+event_cols <- c('Station', 'Date', 'Lab')
+
+df_events <- df_full_export %>%
+  distinct(across(all_of(event_cols)))
+
+n_events <- nrow(df_events)
+
+n_events
+```
+
+## Export 1: Phyto Metadata
+
+For further analysis, subset by phytoplankton metadata columns
+
+```{r}
+df_phyto_meta <- df_full_export %>%
+  select(Survey:Microcystis, RelCellDensity_CentricDiatoms:AbsCellDensity_PennateDiatoms)
+```
+
+## Export 2: No Phyto Metadata
+
+For analyses without phytoplankton metadata.
+
+```{r}
+df_cells <- df_full_export %>%
+  select(Survey:tot_cells, modeled_class, mvi_class:AbsCellDensity_PennateDiatoms)
+```
+
+## Export
+
+```{r}
+wq <- wq %>% ungroup()
+
+save(
+  df_phyto_meta,
+  df_cells,
+  wq,
+  file = here::here('Short Term Analysis/st_data/01_afterlab.Rda')
+)
+```
