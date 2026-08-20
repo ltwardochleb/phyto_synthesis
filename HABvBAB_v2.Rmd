@@ -24,25 +24,11 @@ library(DBI)
 library(odbc)
 library(ggmap)
 library(ggpubr)
-library(EDIutils)
-
-#--------------------------------------------------
-# Helper function for loading EDI entities
-#--------------------------------------------------
-read_edi_entity <- function(package_id, entity_name) {
-  entity_id <- read_data_entity_names(package_id) %>%
-    filter(entityName == entity_name) %>%
-    pull(entityId)
-  raw_file <- read_data_entity(package_id, entity_id)
-  readr::read_csv(raw_file, show_col_types = FALSE)
-}
 
 #--------------------------------------------------
 # Load PESP data
 #--------------------------------------------------
 
-#pesp <- read_edi_entity(package_id = "edi.2209.3",entity_name = "PESP_enumeration.csv") 
-  
 pesp <- read.csv("Data/PESP_enumeration.csv") %>%
   mutate(Date = as.Date(Date)) %>%
   arrange(Date, Time)
@@ -51,9 +37,11 @@ pesp <- read.csv("Data/PESP_enumeration.csv") %>%
 # Load EMP discrete WQ data
 #--------------------------------------------------
 
-#emp <- read_edi_entity(package_id = "edi.458.14",entity_name = "EMP_DWQ_1975-2024") 
 emp <- read.csv("Data/EMP_DWQ_Data_2024.csv") 
 emp$analyte_unit <- paste(emp$Analyte, emp$Result_Unit, sep = "-") 
+
+emp <- emp %>%
+  mutate(Result_Value = if_else(Detection_Status == "Not detected", as.character(MRL), Result_Value))
 
 id_cols <- c("Date", "Time", "Station")
 
@@ -128,6 +116,8 @@ dat1 <- data.frame(Survey="DWR-EMP",
                    TDS=wide$`Total Dissolved Solids-mg/L`,
                    TSS=wide$`Total Suspended Solids-mg/L`,
                    VSS=wide$`Volatile Suspended Solids-mg/L`)
+
+dat1$Date <- as.Date(dat1$Date)
 
 #--------------------------------------------------
 # Load Peterson data
@@ -244,7 +234,7 @@ dat2 <- data.frame(Survey="USGS-BP",
 
 wq <- rbind(dat1,dat2)
 wq$Longitude <- as.numeric(wq$Longitude)
-rm(binned1,binned2,cruiseall,dat1,dat2,depths_wide,emp,joined,nutrients,stat,values_wide,wide,wide1,wide2,x,id_cols,read_edi_entity)
+rm(binned1,binned2,cruiseall,dat1,dat2,depths_wide,emp,joined,nutrients,stat,values_wide,wide,wide1,wide2,x,id_cols)
 
 #--------------------------------------------------
 # Load EMP benthic data
