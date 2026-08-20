@@ -27,7 +27,6 @@ library(EDIutils)
 #--------------------------------------------------
 # Helper function for loading EDI entities
 #--------------------------------------------------
-
 read_edi_entity <- function(package_id, entity_name) {
   entity_id <- read_data_entity_names(package_id) %>%
     filter(entityName == entity_name) %>%
@@ -40,7 +39,9 @@ read_edi_entity <- function(package_id, entity_name) {
 # Load PESP data
 #--------------------------------------------------
 
-pesp <- read_edi_entity(package_id = "edi.2209.2",entity_name = "PESP_enumeration.csv") %>%
+#pesp <- read_edi_entity(package_id = "edi.2209.3",entity_name = "PESP_enumeration.csv") 
+  
+pesp <- read.csv("Data/PESP_enumeration.csv") %>%
   mutate(Date = as.Date(Date)) %>%
   arrange(Date, Time)
 
@@ -48,7 +49,8 @@ pesp <- read_edi_entity(package_id = "edi.2209.2",entity_name = "PESP_enumeratio
 # Load EMP discrete WQ data
 #--------------------------------------------------
 
-emp <- read_edi_entity(package_id = "edi.458.14",entity_name = "EMP_DWQ_1975-2024") 
+#emp <- read_edi_entity(package_id = "edi.458.14",entity_name = "EMP_DWQ_1975-2024") 
+emp <- read.csv("Data/EMP_DWQ_Data_2024.csv") 
 emp$analyte_unit <- paste(emp$Analyte, emp$Result_Unit, sep = "-") 
 
 id_cols <- c("Date", "Time", "Station")
@@ -129,24 +131,7 @@ dat1 <- data.frame(Survey="DWR-EMP",
 # Load Peterson data
 #--------------------------------------------------
 
-con <- dbConnect(odbc(),
-                 Driver = "MySQL ODBC 9.7 Unicode Driver",
-                 Server = "mysql8.natweb.usgs.gov",
-                 Database = "sfbay",
-                 UID = "sfbay",
-                 PWD = "TnMNAXA9AypR", #Ask Schuyler for PW if you need it!
-                 Port = 3306,
-                 SSLMODE = "REQUIRED")
-
-# Read in cruise database
-cruiseall <- dbReadTable(con, "cruiseall")
-
-# Read in nutrient database
-nutrients <- dbReadTable(con, "nutrients")
-
-# Disconnect database
-dbDisconnect(con)
-rm(con)
+load("Data/Peterson_data.Rdata")
 
 id_cols <- c("date", "time", "stat")
 
@@ -273,8 +258,13 @@ clam[is.na(clam)] <- NA
 # Load Dayflow data
 #--------------------------------------------------
 
-df <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv",show_col_types = FALSE) %>%
-  mutate(Date = as.Date(Date, format = "%m/%d/%Y"),WY = ifelse(Month >= 10, Year + 1, Year)) %>%
+d1<-read_csv("Data/Dayflow/dayflow-results-1997-2023.csv",show_col_types = FALSE) %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%Y"))
+d2<-read_csv("Data/Dayflow/dayflow-results-2024.csv",show_col_types = FALSE) %>% rename(Month=Mo)
+d3<-read_csv("Data/Dayflow/dayflow-results-2025.csv",show_col_types = FALSE)%>% rename(Month=Mo)
+df <- rbind(d1,d2,d3); rm(d1,d2,d3)
+
+df <- df %>% mutate(WY = ifelse(Month >= 10, Year + 1, Year)) %>%
   left_join(read_csv("Data/Dayflow/wy_class_ind.csv",show_col_types = FALSE),by = "WY")
 
 ```
