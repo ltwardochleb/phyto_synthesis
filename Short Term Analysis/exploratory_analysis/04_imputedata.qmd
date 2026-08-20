@@ -366,35 +366,35 @@ complete(imp, 'long') %>%
 Check density curves
 
 ```{r}
-long_imp <- complete(imp, 'long')
-
-nutrients <- c('DissAmmonia','DissOrthophos')
-
-for (nut in nutrients) {
-
-  d_imp <- long_imp %>% select(.imp, Station, value = all_of(nut))
-  d_obs <- df_mvi   %>% select(Station, value = all_of(nut)) %>% filter(!is.na(value))
-
-  n_lab <- df_mvi %>%
-    group_by(Station) %>%
-    summarize(
-      lab = paste0(first(Station), ' (', sum(!is.na(.data[[nut]])), 'd / ',
-                   sum(is.na(.data[[nut]])), 'nd)'),
-      .groups = 'drop'
-    )
-
-  p <- ggplot(d_imp %>% left_join(n_lab, by = 'Station'),
-              aes(value, group = .imp)) +
-    geom_density(colour = 'red', linewidth = 0.2) +
-    geom_density(data = d_obs %>% left_join(n_lab, by = 'Station'),
-                 aes(value), inherit.aes = FALSE,
-                 colour = 'steelblue', linewidth = 0.8) +
-    facet_wrap(~ lab, scales = 'free') +
-    labs(title = nut, x = nut, y = 'Density') +
-    theme_minimal()
-
-  print(p)
-}
+# long_imp <- complete(imp, 'long')
+# 
+# nutrients <- c('DissAmmonia','DissOrthophos')
+# 
+# for (nut in nutrients) {
+# 
+#   d_imp <- long_imp %>% select(.imp, Station, value = all_of(nut))
+#   d_obs <- df_mvi   %>% select(Station, value = all_of(nut)) %>% filter(!is.na(value))
+# 
+#   n_lab <- df_mvi %>%
+#     group_by(Station) %>%
+#     summarize(
+#       lab = paste0(first(Station), ' (', sum(!is.na(.data[[nut]])), 'd / ',
+#                    sum(is.na(.data[[nut]])), 'nd)'),
+#       .groups = 'drop'
+#     )
+# 
+#   p <- ggplot(d_imp %>% left_join(n_lab, by = 'Station'),
+#               aes(value, group = .imp)) +
+#     geom_density(colour = 'red', linewidth = 0.2) +
+#     geom_density(data = d_obs %>% left_join(n_lab, by = 'Station'),
+#                  aes(value), inherit.aes = FALSE,
+#                  colour = 'steelblue', linewidth = 0.8) +
+#     facet_wrap(~ lab, scales = 'free') +
+#     labs(title = nut, x = nut, y = 'Density') +
+#     theme_minimal()
+# 
+#   print(p)
+# }
 ```
 
 ## Add imputed vals to df
@@ -486,13 +486,21 @@ Subsetting all of mvi to 2022
 
 ```{r}
 df_mvi <- df_mvi %>%
-  filter(!Year %in% c(2023, 2024))
+  filter(!c(Year %in% c(2023, 2024)))
 ```
 
 
 ```{r}
 # pick one chain
-df_mvi <- complete(imp, 1)
+df_mvi <- df_mvi %>%
+  mutate(
+    Year   = factor(Year),
+    Month  = factor(Month),
+    Region = factor(Region)
+  ) %>%
+  select(-all_of(system_vars)) %>%
+  left_join(complete(imp, 1) %>% select(Year, Month, Region, all_of(system_vars)),
+            by = c("Year", "Month", "Region"))
 ```
 
 # Export
