@@ -41,8 +41,9 @@ emp <- read.csv("Data/EMP_DWQ_Data_2024.csv")
 emp$analyte_unit <- paste(emp$Analyte, emp$Result_Unit, sep = "-") 
 
 emp <- emp %>%
-  mutate(Result_Value = if_else(Detection_Status == "Not detected", as.character(MRL), Result_Value))
-
+   mutate(Result_Value = if_else(Detection_Status == 'Not detected',
+                                                                   paste0('ND_', MRL),
+                                                                   as.character(Result_Value)))
 id_cols <- c("Date", "Time", "Station")
 
 values_wide <- emp %>%
