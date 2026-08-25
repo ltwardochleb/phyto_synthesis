@@ -24,6 +24,8 @@ library(DBI)
 library(odbc)
 library(ggmap)
 library(ggpubr)
+library(lme4)
+library(mice)
 
 #--------------------------------------------------
 # Load PESP data
@@ -40,10 +42,177 @@ pesp <- read.csv("Data/PESP_enumeration.csv") %>%
 emp <- read.csv("Data/EMP_DWQ_Data_2024.csv") 
 emp$analyte_unit <- paste(emp$Analyte, emp$Result_Unit, sep = "-") 
 
+# Perry: remove string analytes
 emp <- emp %>%
-   mutate(Result_Value = if_else(Detection_Status == 'Not detected',
-                                                                   paste0('ND_', MRL),
-                                                                   as.character(Result_Value)))
+  filter(!(Analyte %in% c('Weather Observations','Sky Conditions','Rain','Wave Scale')))
+
+# four rows have incorrect values, but two aren't relevant and none have recoverable info; remove the rows
+# emp %>%
+#   filter(
+#     !is.na(Result_Value),
+#     is.na(suppressWarnings(as.numeric(as.character(Result_Value))))
+#   )
+
+emp <- emp %>%
+  mutate(
+    Result_Value = as.character(Result_Value),
+    Result_Value = case_when(
+      Station == 'D28A' &
+        as.character(Date) == '2000-11-02' &
+        Result_Value == '9.4 Hori' ~ '9.4',
+      TRUE ~ Result_Value
+    )
+  ) %>%
+  filter(
+    !(
+      (Station == 'LSZ6' & as.character(Date) == '2002-08-16' & Result_Value == 'Hach 2100P') |
+      (Station == 'NZ325' & as.character(Date) == '2002-11-15' & Result_Value == 'Not recorded') |
+      (Station == 'P8' & as.character(Date) == '2005-04-15' & Result_Value == 'Vertical Seabird')
+    )
+  )
+
+# emp <- emp %>%
+#    mutate(Result_Value = if_else(Detection_Status == 'Not detected',
+#                                                                    paste0('ND_', MRL),
+#                                                                    as.character(Result_Value)))
+# 
+# # Perry: check for NDs
+# emp_nd <- emp %>%
+#   filter(Detection_Status == "Not detected")
+```
+
+# Perry: Impute
+
+Impute < RL values
+
+Sensitivity checks were done in 04_imputedata.qmd
+
+```{r}
+# custom mice method: uniform draw between close-to-zero and RL
+# # wy: where y; ry: response y
+mice.impute.unifrl <- function(y, ry, x, wy = NULL, ...) {
+  if (is.null(wy)) wy <- !ry
+
+  rl <- as.numeric(x[wy, 'MRL'])
+
+  runif(
+    n = sum(wy),
+    min = 0,
+    max = rl
+  )
+}
+
+# result_Value and MRL must be numeric
+emp_imp <- emp %>%
+  mutate(
+    Result_Value = as.numeric(Result_Value),
+    MRL = as.numeric(MRL)
+  )
+
+# only impute ND cells
+where <- matrix(
+  FALSE,
+  nrow = nrow(emp_imp),
+  ncol = ncol(emp_imp),
+  dimnames = list(NULL, names(emp_imp))
+)
+
+where[, 'Result_Value'] <-
+  is.na(emp_imp$Result_Value) &
+  emp_imp$Detection_Status == 'Not detected' &
+  !is.na(emp_imp$MRL)
+
+# only Result_Value is imputed
+meth <- make.method(emp_imp)
+meth[] <- ''
+meth['Result_Value'] <- 'unifrl'
+
+# MRL col is the RL upper bound
+pred <- make.predictorMatrix(emp_imp)
+pred[] <- 0
+pred['Result_Value', 'MRL'] <- 1
+
+set.seed(42)
+
+imp <- mice(
+  emp_imp,
+  method = meth,
+  predictorMatrix = pred,
+  where = where,
+  m = 10,
+  maxit = 1,
+  printFlag = FALSE
+)
+```
+
+```{r}
+# check data for relevant nutrients
+long_imp <- complete(imp, action = 'long')
+
+nutrients <- c('Dissolved Ammonia', 'Dissolved Orthophosphate', 'Dissolved Nitrate + Nitrite', 'Dissolved Silica', 'Chlorophyll a')
+
+for (nut in nutrients) {
+
+  d_imp <- long_imp %>%
+    filter(Analyte == nut) %>%
+    select(.imp, Station, Result_Value)
+
+  d_obs <- emp_imp %>%
+    filter(Analyte == nut, !is.na(Result_Value)) %>%
+    select(Station, Result_Value)
+
+  n_lab <- emp_imp %>%
+    filter(Analyte == nut) %>%
+    group_by(Station) %>%
+    summarize(
+      n_detected = sum(!is.na(Result_Value)),
+      n_nondetect = sum(
+        is.na(Result_Value) &
+          Detection_Status == 'Not detected' &
+          !is.na(MRL),
+        na.rm = TRUE
+      ),
+      lab = paste0(
+        unique(Station), ' (', n_detected, ' d / ', n_nondetect, ' nd)'),
+      .groups = 'drop') %>%
+    filter(n_nondetect > 0)
+
+  p <- ggplot(
+    d_imp %>% inner_join(n_lab, by = 'Station'),
+    aes(x = Result_Value, group = .imp)
+  ) +
+    geom_density(color = 'red', linewidth = 0.2) +
+    geom_density(
+      data = d_obs %>% inner_join(n_lab, by = 'Station'),
+      aes(x = Result_Value),
+      inherit.aes = FALSE,
+      colour = 'steelblue',
+      linewidth = 0.8
+    ) +
+    facet_wrap(~lab, scales = 'free') +
+    labs(title = nut, x = nut, y = 'Density') +
+    theme_minimal()
+
+  print(p)
+}
+```
+
+```{r}
+# extract one dataset of the 10 computed
+emp <- complete(imp, action = 1)
+
+rm(imp, long_imp, emp_imp)
+```
+
+```{r}
+# check left over NAs; none matter
+emp %>%
+  filter(is.na(Result_Value))
+```
+
+# Back to Code
+
+```{r}
 id_cols <- c("Date", "Time", "Station")
 
 values_wide <- emp %>%
@@ -66,7 +235,9 @@ depths_wide <- emp %>%
   )
 
 wide <- left_join(depths_wide, values_wide,by = id_cols)
-wide <- wide %>% mutate(across(c(4:30,32:40,44:54), as.numeric))
+
+# Perry: 4 fewer cols bc removed string analytes
+wide <- wide %>% mutate(across(c(4:30,32:40,44:50), as.numeric))
 
 dat1 <- data.frame(Survey="DWR-EMP",
                    Station=wide$Station,
@@ -407,9 +578,9 @@ dat1 <- dat %>% filter(Region %in% c("Central", "Confluence", "Suisun Bay") &
                         Date > "2007-12-31" &    
                         Survey %in% c("DWR-EMP","USGS-BP"))   
 
+# Perry: rn, from "Datetime" to "VSS"
 dat1 <- dat1 %>% ungroup()%>% filter(!if_all(24:67, is.na)) # Screens out PESP samples without corresponding WQ data
 dat1 <- dat1 %>% arrange(Date)
-
 ```
 
 
@@ -625,7 +796,7 @@ dat <- dat1[, c("Survey","Year","Season","Month","Date","Region","Station","Lati
                  "DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica","TOC","DOC","TDS",
                  "TSS","VSS","SAC","SJR","OUT","EXPORTS","Index","monthly_biomass","monthly_grazing_rate","monthly_filtration_rate")]
 
-save(dat, clam, df, pesp, wq, file = "Data/integrated_dataset_2008-2024.RData")
+save(dat, clam, df, pesp, wq, file = "Data/integrated_dataset_2008-2024_imp.RData")
 
 ```
 
