@@ -98,7 +98,7 @@ for (region in r){
 
 ```
 
-## Impute
+## Impute data
 
 ```{r}
 regional_imp <- list()
@@ -394,25 +394,25 @@ testDispersion(bm3.po4.imp1.glm2)
 plot(simulateResiduals(bm3.po4.imp1.glm2))
 ```
 
-### bm3.po4.imp1.glm1 temperature
+### bm4.po4.imp1.glm1 temperature
 ```{r}
 testDispersion(bm4.po4.imp1.glm1)
 plot(simulateResiduals(bm4.po4.imp1.glm1))
 ```
 
-### bm3.po4.imp1.glm2 season
+### bm4.po4.imp1.glm2 season
 ```{r}
 testDispersion(bm4.po4.imp1.glm2)
 plot(simulateResiduals(bm4.po4.imp1.glm2))
 ```
 
-### bm3.po4.imp1.glm1 temperature
+### bm6.po4.imp1.glm1 temperature
 ```{r}
 testDispersion(bm6.po4.imp1.glm1)
 plot(simulateResiduals(bm6.po4.imp1.glm1))
 ```
 
-### bm3.po4.imp1.glm2 season
+### bm6.po4.imp1.glm2 season
 ```{r}
 testDispersion(bm6.po4.imp1.glm2)
 plot(simulateResiduals(bm6.po4.imp1.glm2))
@@ -555,7 +555,7 @@ ldcurve <- function(model_name,param) {
 
   #bind the sequenced dataframe and the median dataframe. 
   df_pred <- bind_cols(df_pred,df_mean) %>%
-    select(colnames(model_params))
+    select(colnames(model_params)) #selects only parameters in the model 
   
   #STEP 2: Predict blooms based on the datframe you created.
   df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
@@ -615,7 +615,7 @@ for(i in colnames(ld10tab)) {
   df_mean <- df1 %>%
     group_by() %>%
     summarize_if(where(is.numeric), ~ median(.x, na.rm = TRUE)) %>%
-    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom)
+    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom) #selects only parameters in the model 
   
   df_pred2 <- bind_cols(df_pred2,df_mean)
   
