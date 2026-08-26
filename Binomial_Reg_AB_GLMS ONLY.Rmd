@@ -79,6 +79,31 @@ df$logEXPORT <- log(df$EXPORT)
 
 ```
 
+## Remove outliers based on z-score
+
+removing outliers based on z-score, assuming the log transformations of the targeted variables have a normal distribution.
+
+-3 - 3 is a commonly used range beyond which values are considered outliers.
+https://statsandr.com/blog/outliers-detection-in-r/#z-scores 
+
+
+```{r}
+
+clean_df_z <- df 
+
+clean_df_z$logDissAmmonia[abs(scale(clean_df_z$logDissAmmonia)) > 3.29] <- NA
+
+clean_df_z$logDissNitrateNitrite[abs(scale(clean_df_z$logDissNitrateNitrite)) > 3.29] <- NA
+
+clean_df_z$logDissOrthophos[abs(scale(clean_df_z$logDissOrthophos)) > 3.29] <- NA
+
+outliers_z <- anti_join(df, clean_df_z)
+
+print(paste("rows changed:",nrow(outliers_z)))
+
+df <- clean_df_z
+```
+
 ## Separate Dataset Regionally
 May need to separate by flow as well, check from Ryan
 
@@ -533,10 +558,11 @@ levels(df1$clam_step)[median_index_c]
 Creates the LD curves for each parameter and model
 ```{r}
 
-ldcurve <- function(model_name,param) {
+ldcurve <- function(model_name,param,xlab_name="parameter label") {
   
   # model_name <- bm3.po4.imp1.glm1
   # param <- "laglogDissNitrateNitrite"
+  # xlab_name <- "Seasonal Lag - Dissolved Nitrate Nitrite"
   
   #STEP 1: Create a dataframe that holds all parameters but one constant at their median.
   
@@ -566,7 +592,11 @@ ldcurve <- function(model_name,param) {
     select(colnames(model_params)) #selects only parameters in the model 
   
   #STEP 2: Predict blooms based on the datframe you created.
-  df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
+  df_pred <- as.data.frame(predict(model_name, newdata = df_pred, type = "response",se.fit=T)) %>%
+    select(1,2) %>%
+    mutate(hi = fit+se.fit,
+           lo = fit-se.fit) %>%
+    bind_cols(df_pred)
 
   #summarize the statistics of the natural (pre-z-scored) dataframe. 
   df1_stats <- df1_nat %>%
@@ -583,7 +613,17 @@ ldcurve <- function(model_name,param) {
   rename(!!paste0(param,"_nat") := paramnat)
 
   #Plot the LD curve
-  plot(df_pred[[paste0(param,"_nat")]],df_pred$predicted,ylab="LD as decimal", xlab= param)
+  plot(df_pred[[paste0(param,"_nat")]],df_pred$fit,ylab="Probability of Phytoplankton Bloom", xlab= xlab_name,type='n',
+       ylim = c(0,max(df_pred$hi)))
+  #polygon
+  polygon(c(rev(df_pred[[paste0(param,"_nat")]]),df_pred[[paste0(param,"_nat")]]),c(rev(df_pred$hi),df_pred$lo),
+          col='grey80',border=NA)
+  #add LD line
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$fit)
+  #add high interval
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$hi,lty='dashed',col='red')
+  #add low interval
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$lo,lty='dashed',col='red')
 }
 
 # ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
@@ -659,7 +699,7 @@ findLD(bm3.po4.imp1.glm1,10) %>%
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm1,"laglogDissAmmonia")
+ldcurve(bm3.po4.imp1.glm1,"laglogDissAmmonia","Seasonal Lag - DissAmmonia")
 ```
 
 
@@ -795,7 +835,7 @@ findLD(bm4.po4.imp1.glm1,10) %>%
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"laglogDissAmmonia")
+ldcurve(bm4.po4.imp1.glm1,"laglogDissAmmonia","Previous Season Average - Dissolved Ammonia (mg/L)")
 ```
 
 
@@ -813,7 +853,7 @@ ldcurve(bm4.po4.imp1.glm1,"laglogDissOrthophos")
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"laglogSAC")
+ldcurve(bm4.po4.imp1.glm1,"laglogSAC", "Previous Season Average Sacramento River Flow (CFS)")
 ```
 
 
@@ -843,13 +883,13 @@ ldcurve(bm4.po4.imp1.glm1,"logDissOrthophos")
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"logSAC")
+ldcurve(bm4.po4.imp1.glm1,"logSAC","Sacramento River Flow (CFS)")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"Temperature")
+ldcurve(bm4.po4.imp1.glm1,"Temperature","Temperature (C)")
 ```
 
 
@@ -957,7 +997,7 @@ ldcurve(bm6.po4.imp1.glm1,"laglogDissOrthophos")
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"laglogSAC")
+ldcurve(bm6.po4.imp1.glm1,"laglogSAC","Previous Season Average Sacramento River Flow (CFS)")
 ```
 
 
@@ -987,13 +1027,13 @@ ldcurve(bm6.po4.imp1.glm1,"logDissOrthophos")
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"logSAC")
+ldcurve(bm6.po4.imp1.glm1,"logSAC", "Sacramento River Flow (CFS)")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"Temperature")
+ldcurve(bm6.po4.imp1.glm1,"Temperature","Temperature (C)")
 ```
 
 
