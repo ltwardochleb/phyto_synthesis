@@ -1,0 +1,492 @@
+---
+title:
+  "Global GAM SHORT"
+author:
+  "Ryan Hankins"
+output: 
+  html_document:
+        toc: TRUE
+        toc_float: TRUE
+        code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, tidy = "styler")
+```
+# Background on this RMD file
+
+This file continues the work in Global_GAM_RH.RMD. Here, I remove outliers and change nutrient terms to linear. I also only work with the top imputed model, and do not repeat any of the imputation diagnostic procedures. 
+
+# Purpose
+
+The purpose of these models is to understand the effects of environmental drivers and antecedent conditions on Delta-wide phytoplankton biomass (chl-a). 
+
+# Prepare Data
+
+```{r, include=FALSE}
+
+library(mgcv)
+library(tidyverse)
+library(marginaleffects)
+library(MuMIn)
+library(corrplot)
+library(stats)
+library(mice)
+library(lattice)
+library(ggplot2)
+library(data.table)
+```
+
+
+```{r}
+
+# variables to include in the analysis:
+c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
+       "EXPORT","logEXPORT","OUT","lagOUT", "DissAmmonia",
+       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
+       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
+       "lagSecchi","Conductivity","lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+# 2022 is the end of the study period
+df <- subset(df,df$Date <= "2022-12-31")
+
+# Changing categorical variables to factors
+# need to change regions to factor farther down so dataframe splitting by region works properly
+#df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+
+# Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+
+# log transforming chl-a to achieve normal distribution of response variable.
+df$logchla <- log(df$Chlorophyll)
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+df$logEXPORT <- log(df$EXPORT)
+
+
+df <- subset(df, select = c)
+
+```
+
+
+## Remove outliers {.tabset}
+
+### Investigating problem variables
+
+```{r}
+histogram(df$logDissAmmonia)
+boxplot(df$logDissAmmonia)
+histogram(df$logDissOrthophos)
+boxplot(df$logDissOrthophos)
+histogram(df$logDissNitrateNitrite)
+boxplot(df$logDissNitrateNitrite)
+``` 
+
+### Remove outliers based on z-score
+
+removing outliers based on z-score, assuming the log transformations of the targeted variables have a normal distribution.
+
+-3 - 3 is a commonly used range beyond which values are considered outliers.
+https://statsandr.com/blog/outliers-detection-in-r/#z-scores 
+
+
+```{r}
+
+clean_df_z <- df 
+
+clean_df_z$logDissAmmonia[abs(scale(clean_df_z$logDissAmmonia)) > 3.29] <- NA
+
+clean_df_z$logDissNitrateNitrite[abs(scale(clean_df_z$logDissNitrateNitrite)) > 3.29] <- NA
+
+clean_df_z$logDissOrthophos[abs(scale(clean_df_z$logDissOrthophos)) > 3.29] <- NA
+
+outliers_z <- anti_join(df, clean_df_z)
+
+print(paste("rows changed:",nrow(outliers_z)))
+
+```
+
+
+```{r}
+histogram(clean_df_z$logDissAmmonia)
+boxplot(clean_df_z$logDissAmmonia)
+
+histogram(clean_df_z$logDissOrthophos)
+boxplot(clean_df_z$logDissOrthophos)
+
+histogram(clean_df_z$logDissNitrateNitrite)
+boxplot(clean_df_z$logDissNitrateNitrite)
+
+```
+
+### remove based on IQR method
+
+```{r}
+#testing removing outliers based on IQR
+#Define upper and lower bounds for variables
+
+ub_lda <- quantile(df$logDissAmmonia, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissAmmonia, na.rm=TRUE)
+ub_ldn <- quantile(df$logDissNitrateNitrite, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissNitrateNitrite, na.rm=TRUE)
+ub_ldo <- quantile(df$logDissOrthophos, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissOrthophos, na.rm=TRUE)
+
+lb_lda <- quantile(df$logDissAmmonia, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissAmmonia, na.rm=TRUE)
+lb_ldn <- quantile(df$logDissNitrateNitrite, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissNitrateNitrite, na.rm=TRUE)
+lb_ldo <- quantile(df$logDissOrthophos, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissOrthophos, na.rm=TRUE)
+
+outliers_lda <-  df$logDissAmmonia[df$logDissAmmonia < lb_lda | df$logDissAmmonia > ub_lda]
+outliers_lda <- outliers_lda[!is.na(outliers_lda)]
+
+outliers_ldn <- df$logDissNitrateNitrite[df$logDissNitrateNitrite < lb_ldn | df$logDissNitrateNitrite > ub_ldn ]
+outliers_ldn <- outliers_ldn[!is.na(outliers_ldn)]
+
+outliers_ldo <- df$logDissOrthophos[df$logDissOrthophos < lb_ldo | df$logDissOrthophos > ub_ldo]
+outliers_ldo <- outliers_ldo[!is.na(outliers_ldo)]
+
+#########################################
+# Remove outliers
+
+clean_df_iqr <- df
+
+clean_df_iqr$logDissAmmonia[clean_df_iqr$logDissAmmonia < lb_lda | clean_df_iqr$logDissAmmonia > ub_lda ] <- NA
+
+clean_df_iqr$logDissNitrateNitrite[clean_df_iqr$logDissNitrateNitrite < lb_ldn | clean_df_iqr$logDissNitrateNitrite > ub_ldn ] <- NA
+
+clean_df_iqr$logDissOrthophos[clean_df_iqr$logDissOrthophos < lb_ldo | clean_df_iqr$logDissOrthophos > ub_ldo ] <- NA
+
+
+outliers_iqr <- anti_join(df, clean_df_iqr)
+
+paste("rows changed:",nrow(outliers_iqr))
+```
+
+```{r}
+histogram(clean_df_iqr$logDissAmmonia)
+boxplot(clean_df_iqr$logDissAmmonia)
+
+histogram(clean_df_iqr$logDissOrthophos)
+boxplot(clean_df_iqr$logDissOrthophos)
+
+histogram(clean_df_iqr$logDissNitrateNitrite)
+boxplot(clean_df_iqr$logDissNitrateNitrite)
+
+```
+
+## Choose dataset
+
+```{r}
+# choose which outlier adjusted dataset to use:
+# outliers removed by z-score:
+df <- clean_df_z
+# outliers removed by IQR
+#df <- clean_df_iqr
+```
+## Separate dataset regionally
+
+```{r}
+# We need to remove the flow variables so we don't have duplicated values for each region
+
+df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
+
+df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
+
+r <- unique(df_no_flow$Regions)
+region_list <- list()
+for (region in r){
+  df_regional <- df_no_flow %>% filter(Regions == region)
+  region <- gsub(" ","",region)
+  region_list[[region]] <- df_regional
+}
+```
+
+## Impute
+
+Impute all of the regional datasets 5 times
+
+```{r include=FALSE}
+
+# This creates a list of mids objects
+
+regional_imp <- list()
+for (region_name in as.character(names(region_list))){
+  current_df <- region_list[[region_name]]
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
+  new_name <- paste0(region_name, "_imp")
+  regional_imp[[new_name]]<- imp
+}
+```
+
+## Make combined imputed datasets
+
+```{r}
+# Create imputed datasets for each region
+regional_imp_dfs <- list()
+action_seq <- as.list(seq(1,5))
+for (region_imp in as.character(names(regional_imp))){
+      current_imp <- regional_imp[[region_imp]]
+      for (i in action_seq){
+        df_new <- complete(current_imp,action = i, include=FALSE)
+        df_new <- left_join( df_new,df_flow, by=c("Date","Regions"))
+        new_name <- paste0(region_imp, "_df", i)
+        regional_imp_dfs[[new_name]]<- df_new}}
+
+```
+
+
+## Add lag terms to the imputed datasets
+
+```{r}
+# This code is taken from clamdata_cleanup_AB_261125.R
+
+df_list_lag <- lapply(regional_imp_dfs, function(y) {
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- y %>%
+  group_by(Regions,Year,season) %>%
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>% 
+  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite,laglogConductivity,
+         laglogSAC,laglogOUT, laglogDissOrthophos, laglogEXPORT)
+
+
+y <- y %>% 
+  mutate(seasonyear = paste0(season,year(Date))) %>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  select(-seasonyear)%>%
+  relocate(Date)
+})
+
+```
+
+## Combine the imputed datasets
+
+Now we have to combine the 25 regional datasets into 5 datasets that include all regions.This is also where we are z-scoring the datasets for better comparison of the predictors' relative effects.
+
+```{r}
+### df1
+df1 <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) %>%
+  # z-score as the last step before the GAM
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df2
+df2 <- distinct(rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
+             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))%>%
+ # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df3
+
+df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
+             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df4
+df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
+             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+
+### df5
+
+df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
+             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))%>%
+  # z- score
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+# Make regions a factor
+df1$Regions <- as.factor(df1$Regions)
+df2$Regions <- as.factor(df2$Regions)
+df3$Regions <- as.factor(df3$Regions)
+df4$Regions <- as.factor(df4$Regions)
+df5$Regions <- as.factor(df5$Regions)
+
+```
+
+# Fit models
+
+This time, I am fitting the top performing models with linear terms for the nutrients.
+
+```{r}
+m3.po4.imp1.log <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + laglogDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logOUT, by = season) + clam_step + s(logOUT) + s(laglogOUT) + laglogDissAmmonia+ logDissOrthophos+ laglogDissOrthophos, data=df1, method = 'ML', select=TRUE)
+
+m4.po4.imp1.log <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + laglogDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + laglogDissAmmonia + logDissOrthophos + laglogDissOrthophos, data=df1, method = 'ML', select=TRUE)
+
+m6.po4.imp1.log <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + laglogDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(Regions, bs='re') + season + s(logSAC, by =season) + clam_step + s(laglogSAC) + laglogDissAmmonia+ logDissOrthophos+ s(EXPORT)+ laglogDissOrthophos,data= df1, method = 'ML', select=TRUE)
+```
+
+
+# Check AIC/BIC
+
+```{r echo=FALSE}
+
+aic_all<- AIC(m3.po4.imp1.log, m4.po4.imp1.log, m6.po4.imp1.log)
+
+bic_all <- BIC(m3.po4.imp1.log, m4.po4.imp1.log, m6.po4.imp1.log)
+```
+
+
+This table ranks the models by their AIC and shows the difference in AIC/BIC values of each model from the lowest AIC/BIC of all models. The code is taken from here: https://interagencyecologicalprogram.github.io/ND-FASTR/rtm_chl_models_flow_weekly_avg.html#Purpose 
+
+
+```{r}
+# AIC values
+aic_all_t <- aic_all %>%
+  as_tibble(rownames = "Model")
+
+# BIC values
+bic_all_t <- bic_all %>%
+  as_tibble(rownames = "Model")
+
+# Combine AIC and BIC and calculate differences from lowest value
+aic_bic_all <-
+  left_join(aic_all_t, bic_all_t, by = join_by(Model, df)) %>%
+  mutate(across(c(AIC, BIC), ~ .x - min(.x), .names = "{.col}_delta")) %>%
+  select(starts_with("Model"), df, starts_with("AIC"), starts_with("BIC"))
+
+# Sort by AIC
+aic_bic_all %>% arrange(AIC)
+
+# These are performing better with AIC/BIC than the GAMs without the linear terms and the outliers removed
+```
+
+# M3 Results {.tabset}
+
+## GAM Check
+
+```{r}
+gam.check(m3.po4.imp1.log)
+```
+
+## Summary
+
+```{r}
+summary(m3.po4.imp1.log)
+```
+
+## Plot Predictions
+
+```{r echo=FALSE}
+var_list = list("logDissAmmonia","logDissNitrateNitrite","laglogDissNitrateNitrite","logConductivity", "logOUT","laglogOUT", "laglogDissAmmonia","logDissOrthophos","laglogDissOrthophos","Regions")
+```
+
+```{r}
+
+lapply(var_list, function(var) {
+    plot_predictions(m3.po4.imp1.log, condition = var, points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+
+```{r}
+ plot_predictions(m3.po4.imp1.log, condition = c("logOUT","season"), points = 0.5) +
+    theme_classic(base_size = 12)
+```
+
+# M4 Results {.tabset}
+
+## GAM Check
+
+```{r}
+gam.check(m4.po4.imp1.log)
+```
+
+## Summary
+
+```{r}
+summary(m4.po4.imp1.log)
+```
+
+
+## Plot Predictions
+
+```{r echo=FALSE}
+var_list = list("logDissAmmonia", "laglogDissAmmonia", "logDissNitrateNitrite","laglogDissNitrateNitrite",  "logDissOrthophos","laglogDissOrthophos", "logConductivity", "laglogSAC","Regions")
+```
+
+```{r}
+
+lapply(var_list, function(var) {
+    plot_predictions(m4.po4.imp1.log, condition = var, points = 0.5) +
+      theme_classic(base_size = 12)
+})
+``` 
+
+```{r}
+plot_predictions(m4.po4.imp1.log, condition = c("logSAC","season"), points = 0.5) +
+    theme_classic(base_size = 12)
+```
+
+# M6 Results {.tabset}
+
+## GAM Check
+
+```{r}
+gam.check(m6.po4.imp1.log)
+```
+
+## Summary
+
+```{r}
+summary(m6.po4.imp1.log)
+```
+
+
+
+## Plot Predictions
+
+```{r echo = FALSE}
+var_list = list("logDissAmmonia", "laglogDissAmmonia", "logDissNitrateNitrite","laglogDissNitrateNitrite",  "logDissOrthophos","laglogDissOrthophos", "logConductivity","EXPORT", "laglogSAC","Regions")
+```
+
+```{r}
+
+lapply(var_list, function(var) {
+    plot_predictions(m6.po4.imp1.log, condition = var, points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+
+```{r}
+plot_predictions(m6.po4.imp1.log, condition = c("logSAC","season"), points = 0.5) +
+    theme_classic(base_size = 12)
+```
+
