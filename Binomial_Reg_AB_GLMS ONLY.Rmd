@@ -519,6 +519,16 @@ x = std*z + m
 
 ```
 
+## Find median of the factors
+```{r}
+median_index_s <- median(as.integer(df1$season))
+levels(df1$season)[median_index_s]
+
+median_index_c <- median(as.integer(df1$clam_step))
+levels(df1$clam_step)[median_index_c] 
+```
+
+
 ## Function for LD Plots
 Creates the LD curves for each parameter and model
 ```{r}
@@ -534,12 +544,10 @@ ldcurve <- function(model_name,param) {
   df_pred <- data.frame(
     parameter = seq(min(df1[[param]],na.rm=T), max(df1[[param]],na.rm=T), length.out = 1000),
     clam_step = as.factor("post clam"),
-    season = as.factor("Summer"),
-    Regions = as.factor("Suisun Bay")) %>%
+    season = as.factor("Spring")) %>%
     rename(!!param := parameter)
   
   #Expand all the factors so that they reflect the same factors in the original dataset. 
-  df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
   df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
   df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
   
@@ -601,13 +609,10 @@ for(i in colnames(ld10tab)) {
   df_pred2 <- data.frame(
     parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
     clam_step = as.factor("post clam"),
-    season = as.factor("Summer"),
-    Regions = as.factor("Suisun Bay")) %>%
+    season = as.factor("Spring")) %>%
     rename(!!i := parameter)
   
   #expand factors
-  df_pred2$Regions = fct_expand(df_pred2$Regions,c("Central","Confluence","North Delta",
-                                                 "South", "Suisun Bay"))
   df_pred2$season = fct_expand(df_pred2$season,c("Autumn","Spring","Summer","Winter"))
   df_pred2$clam_step = fct_expand(df_pred2$clam_step,c("post clam","pre clam"))
   
