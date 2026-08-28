@@ -431,6 +431,8 @@ df <- rbind(d1,d2,d3); rm(d1,d2,d3)
 df <- df %>% mutate(WY = ifelse(Month >= 10, Year + 1, Year)) %>%
   left_join(read_csv("Data/Dayflow/wy_class_ind.csv",show_col_types = FALSE),by = "WY")
 
+rm(d_imp,d_obs,n_lab,pred,where,meth,nut,p,mice.impute.unifrl)
+
 ```
 
 
