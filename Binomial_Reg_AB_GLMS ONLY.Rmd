@@ -45,7 +45,7 @@ c = c("Chlorophyll", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC"
        "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
        "lagSecchi","Conductivity","lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
 
-df <- read.csv("Data/regional_integrated_dataset3.csv" )
+df <- read.csv("Data/regional_integrated_dataset4.csv" )
 
 df$Date = as.Date(df$Date)
 
@@ -624,6 +624,7 @@ ldcurve <- function(model_name,param,xlab_name="parameter label") {
   lines(df_pred[[paste0(param,"_nat")]],df_pred$hi,lty='dashed',col='red')
   #add low interval
   lines(df_pred[[paste0(param,"_nat")]],df_pred$lo,lty='dashed',col='red')
+  abline(h = 0.05,lty='dashed')
 }
 
 # ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
@@ -826,11 +827,12 @@ ldcurve(bm3.po4.imp1.glm2,"logOUT")
 
 ### LD values (shown as natural)
 ```{r}
-findLD(bm4.po4.imp1.glm1,10) %>%
+ldmodel <- findLD(bm4.po4.imp1.glm1,10) %>%
   merge(findLD(bm4.po4.imp1.glm1,8),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,5),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,3),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,1),by="Parameters")
+ldmodel
 ```
 
 ### laglogDissAmmonia Plot
@@ -853,7 +855,8 @@ ldcurve(bm4.po4.imp1.glm1,"laglogDissOrthophos")
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"laglogSAC", "Previous Season Average Sacramento River Flow (CFS)")
+ldcurve(bm4.po4.imp1.glm1,"laglogSAC", "3 month prior Sacramento River Flow (CFS)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "laglogSAC"], lty='dashed')
 ```
 
 
@@ -884,12 +887,14 @@ ldcurve(bm4.po4.imp1.glm1,"logDissOrthophos")
 ### logSAC Plot
 ```{r}
 ldcurve(bm4.po4.imp1.glm1,"logSAC","Sacramento River Flow (CFS)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "logSAC"], lty='dashed')
 ```
 
 
 ### Temperature Plot
 ```{r}
 ldcurve(bm4.po4.imp1.glm1,"Temperature","Temperature (C)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "Temperature"], lty='dashed')
 ```
 
 
