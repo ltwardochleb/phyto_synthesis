@@ -592,10 +592,12 @@ ldcurve <- function(model_name,param,xlab_name="parameter label") {
     select(colnames(model_params)) #selects only parameters in the model 
   
   #STEP 2: Predict blooms based on the datframe you created.
-  df_pred <- as.data.frame(predict(model_name, newdata = df_pred, type = "response",se.fit=T)) %>%
+  df_pred <- as.data.frame(predict(model_name, newdata = df_pred, type = "link",se.fit=T)) %>%
     select(1,2) %>%
-    mutate(hi = fit+se.fit,
-           lo = fit-se.fit) %>%
+    mutate(fit_prob=plogis(fit),
+           hi = plogis(fit+1.96*se.fit), #upper 95% CI
+           lo = plogis(fit-1.96*se.fit)  #lower 95% CI
+           ) %>%  
     bind_cols(df_pred)
 
   #summarize the statistics of the natural (pre-z-scored) dataframe. 
@@ -619,7 +621,7 @@ ldcurve <- function(model_name,param,xlab_name="parameter label") {
   polygon(c(rev(df_pred[[paste0(param,"_nat")]]),df_pred[[paste0(param,"_nat")]]),c(rev(df_pred$hi),df_pred$lo),
           col='grey80',border=NA)
   #add LD line
-  lines(df_pred[[paste0(param,"_nat")]],df_pred$fit)
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$fit_prob)
   #add high interval
   lines(df_pred[[paste0(param,"_nat")]],df_pred$hi,lty='dashed',col='red')
   #add low interval
@@ -833,6 +835,10 @@ ldmodel <- findLD(bm4.po4.imp1.glm1,10) %>%
   merge(findLD(bm4.po4.imp1.glm1,3),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,1),by="Parameters")
 ldmodel
+l5 <- ldmodel %>%
+  select(Parameters, LD_5)
+l5
+# openxlsx::write.xlsx(l5,"Figures/Binomial GAM/LD5_Table.xlsx")
 ```
 
 ### laglogDissAmmonia Plot
