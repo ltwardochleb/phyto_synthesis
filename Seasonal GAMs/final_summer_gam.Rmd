@@ -1,0 +1,269 @@
+---
+title:
+  "final Summer GAMs"
+author:
+  "Ryan Hankins"
+output: 
+  rmdformats::html_clean:
+    lightbox: true
+    thumbnails: false
+---
+
+# Prepare Data {.tabset}
+
+```{r, include=FALSE}
+library(tidyverse)
+library(corrplot)
+library(DT)
+library(mgcv)
+library(tidyverse)
+library(marginaleffects)
+library(stats)
+library(mice)
+library(ggplot2)
+```
+
+
+
+```{r}
+
+# variables to include in the analysis:
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+# 2022 is the end of the study period
+df <- subset(df,df$Date <= "2022-12-31")
+
+# Changing categorical variables to factors
+# need to change regions to factor farther down so dataframe splitting by region works properly
+df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+# log transforming chl-a to achieve normal distribution of response variable.
+df$logchla <- log(df$Chlorophyll)
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+df$logSJR <- log(df$SJR)
+
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+df$Chlorophyll <- as.numeric(df$Chlorophyll)
+```
+
+
+## make the final dataset
+
+```{r}
+c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month", "season","SAC",
+       "EXPORT","logEXPORT","OUT", "DissAmmonia", "DissNitrateNitrite", 
+       "Temperature","Secchi", "Conductivity","season_num", "DissOrthophos","clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")
+
+smr <- df %>% filter(season == "Summer")%>%subset(select=c)
+```
+
+
+
+## Separate dataset regionally
+
+```{r}
+# We need to remove the flow variables so we don't have duplicated values for each region
+
+df_flow <- smr[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","logSAC")]
+
+df_no_flow <- smr[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT"))]
+
+r <- unique(df_no_flow$Regions)
+region_list <- list()
+for (region in r){
+  df_regional <- df_no_flow %>% filter(Regions == region)
+  region <- gsub(" ","",region)
+  region_list[[region]] <- df_regional
+}
+```
+
+## Impute
+
+Impute all of the regional datasets 5 times
+
+```{r include=FALSE}
+
+# This creates a list of mids objects
+
+regional_imp <- list()
+for (region_name in as.character(names(region_list))){
+  current_df <- region_list[[region_name]]
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
+  new_name <- paste0(region_name, "_imp")
+  regional_imp[[new_name]]<- imp
+}
+```
+
+## Inspect convergence regionally {.tabset}
+
+The plot shows the mean and the standard deviation of the imputed values only. Generally, we want to see the streams intermingle and be free of any trends at the later iterations. (https://www.gerkovink.com/miceVignettes/Convergence_pooling/Convergence_and_pooling.html)
+
+### Central
+
+```{r}
+# Check if convergence is maintained over many iterations.
+imp40 <- mice.mids(regional_imp$Central_imp, maxit=35, print=F)
+plot(imp40)
+```
+
+
+### Confluence
+
+```{r}
+#check if convergence is maintained over many iterations.
+imp40 <- mice.mids(regional_imp$Confluence_imp, maxit=35, print=F)
+plot(imp40)
+```
+
+
+### North
+
+```{r}
+#check if convergence is maintained over many iterations.
+imp40 <- mice.mids(regional_imp$NorthDelta_imp, maxit=35, print=F)
+plot(imp40)
+```
+
+### South
+
+```{r}
+#check if convergence is maintained over many iterations.
+imp40 <- mice.mids(regional_imp$South_imp, maxit=35, print=F)
+plot(imp40)
+```
+
+
+### Suisun Bay
+
+```{r}
+#check if convergence is maintained over many iterations.
+imp40 <- mice.mids(regional_imp$SuisunBay_imp, maxit=35, print=F)
+plot(imp40)
+```
+
+
+## Make combined imputed datasets
+
+```{r}
+# Create imputed datasets for each region
+regional_imp_dfs <- list()
+action_seq <- as.list(seq(1,5))
+for (region_imp in as.character(names(regional_imp))){
+      current_imp <- regional_imp[[region_imp]]
+      for (i in action_seq){
+        df_new <- complete(current_imp,action = i, include=FALSE)
+        df_new <- left_join( df_new,df_flow, by=c("Date","Regions"))
+        new_name <- paste0(region_imp, "_df", i)
+        regional_imp_dfs[[new_name]]<- df_new}}
+
+```
+
+
+## Add lag terms to the imputed datasets
+
+```{r}
+# This code is taken from clamdata_cleanup_AB_261125.R
+
+df_list_lag <- lapply(regional_imp_dfs, function(y) {
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- y %>%
+  group_by(Regions,Year,season) %>%
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>% 
+  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite,laglogConductivity,
+         laglogSAC,laglogOUT, laglogDissOrthophos, laglogEXPORT)
+
+
+y <- y %>% 
+  mutate(seasonyear = paste0(season,year(Date))) %>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  select(-seasonyear)%>%
+  relocate(Date)
+})
+
+```
+
+## Combine the imputed datasets
+
+Now we have to combine the 25 regional datasets into 5 datasets that include all regions.This is also where we are z-scoring the datasets for better comparison of the predictors' relative effects.
+
+```{r}
+### df1
+df1 <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) %>%
+  # z-score as the last step before the GAM
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df2
+df2 <- distinct(rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
+             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))%>%
+ # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df3
+
+df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
+             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+### df4
+df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
+             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))%>%
+  # z-score 
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+
+### df5
+
+df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
+             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))%>%
+  # z- score
+  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+
+# Make regions a factor
+df1$Regions <- as.factor(df1$Regions)
+df2$Regions <- as.factor(df2$Regions)
+df3$Regions <- as.factor(df3$Regions)
+df4$Regions <- as.factor(df4$Regions)
+df5$Regions <- as.factor(df5$Regions)
+
+```
+

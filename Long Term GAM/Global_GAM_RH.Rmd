@@ -25,10 +25,8 @@ library(mgcv)
 library(tidyverse)
 library(marginaleffects)
 library(MuMIn)
-library(car)
 library(corrplot)
 library(stats)
-library(marginaleffects)
 library(mice)
 library(lattice)
 library(ggplot2)
@@ -46,7 +44,6 @@ c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month",  "season","SAC
        "lagSecchi","Conductivity","lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
 
 df <- read.csv("Data/regional_integrated_dataset3.csv" )
-
 df$Date = as.Date(df$Date)
 
 # 1979 is the start of the study period.
@@ -78,10 +75,115 @@ df$logOUT <- log(df$OUT)
 df$logEXPORT <- log(df$EXPORT)
 
 
- df <- subset(df, select = c)
- 
+df <- subset(df, select = c)
+
 ```
 
+# Remove Outliers
+
+## Investigating problem variables
+
+```{r}
+histogram(df$logDissAmmonia)
+boxplot(df$logDissAmmonia)
+histogram(df$DissAmmonia)
+boxplot(df$DissAmmonia)
+histogram(df$logDissOrthophos)
+boxplot(df$logDissOrthophos)
+histogram(df$DissOrthophos)
+boxplot(df$DissOrthophos)
+histogram(df$logDissNitrateNitrite)
+boxplot(df$logDissNitrateNitrite)
+histogram(df$DissNitrateNitrite)
+boxplot(df$DissNitrateNitrite)
+```
+
+## Remove based on z-score
+removing outliers based on z-score, assuming the log transformations of the targeted variables have a normal distribution.
+
+-3.29 - 3.29 is a commonly used range beyond which values are considered outliers.
+https://statsandr.com/blog/outliers-detection-in-r/#z-scores 
+
+Removing rows where ANY of the three variables exceed outlier thresholds because row count must be maintained for the analysis
+
+```{r}
+# df$z_logDissAmmonia<- scale(df$logDissAmmonia)
+# df$z_logDissNitrateNitrite<- scale(df$logDissNitrateNitrite)
+# df$z_logDissOrthophos <- scale(df$logDissOrthophos)
+clean_df_z <- df %>%
+  filter(
+    !(abs(scale(logDissAmmonia)) > 3.29 |
+    abs(scale(logDissNitrateNitrite)) > 3.29 |
+    abs(scale(logDissOrthophos)) > 3.29 ))
+
+
+df<-clean_df_z
+
+outliers_z <- anti_join(df, clean_df_z)
+paste("outliers removed df row count:", nrow(clean_df_z))
+paste("original row count:", nrow(df))
+print(paste("rows removed:",nrow(outliers_z)))
+
+```
+```{r}
+histogram(clean_df_z$logDissAmmonia)
+boxplot(clean_df_z$logDissAmmonia)
+
+histogram(clean_df_z$logDissOrthophos)
+boxplot(clean_df_z$logDissOrthophos)
+
+histogram(clean_df_z$logDissNitrateNitrite)
+boxplot(clean_df_z$logDissNitrateNitrite)
+
+```
+## remove based on IQR method
+
+```{r}
+#testing removing outliers based on IQR
+#Define upper and lower bounds for variables
+
+ub_lda <- quantile(df$logDissAmmonia, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissAmmonia, na.rm=TRUE)
+ub_ldn <- quantile(df$logDissNitrateNitrite, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissNitrateNitrite, na.rm=TRUE)
+ub_ldo <- quantile(df$logDissOrthophos, 0.75, na.rm=TRUE) + 1.5*IQR(df$logDissOrthophos, na.rm=TRUE)
+
+lb_lda <- quantile(df$logDissAmmonia, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissAmmonia, na.rm=TRUE)
+lb_ldn <- quantile(df$logDissNitrateNitrite, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissNitrateNitrite, na.rm=TRUE)
+lb_ldo <- quantile(df$logDissOrthophos, 0.25, na.rm=TRUE) - 1.5*IQR(df$logDissOrthophos, na.rm=TRUE)
+
+outliers_lda <-  df$logDissAmmonia[df$logDissAmmonia < lb_lda | df$logDissAmmonia > ub_lda]
+outliers_lda <- outliers_lda[!is.na(outliers_lda)]
+
+outliers_ldn <- df$logDissNitrateNitrite[df$logDissNitrateNitrite < lb_ldn | df$logDissNitrateNitrite > ub_ldn ]
+outliers_ldn <- outliers_ldn[!is.na(outliers_ldn)]
+
+outliers_ldo <- df$logDissOrthophos[df$logDissOrthophos < lb_ldo | df$logDissOrthophos > ub_ldo]
+outliers_ldo <- outliers_ldo[!is.na(outliers_ldo)]
+
+#########################################
+# Remove outliers
+
+clean_df_iqr <- df %>%
+  filter(!(logDissAmmonia > ub_lda | logDissAmmonia < lb_lda |
+    logDissNitrateNitrite > ub_ldn | logDissNitrateNitrite < lb_ldn |
+    logDissOrthophos > ub_ldo | logDissOrthophos < lb_ldo))
+
+outliers_iqr <- anti_join(df, clean_df_iqr)
+paste("outliers removed df row count:", nrow(clean_df_iqr))
+paste("original row count:", nrow(df))
+paste("rows removed:",nrow(outliers_iqr))
+```
+
+```{r}
+histogram(clean_df_iqr$logDissAmmonia)
+boxplot(clean_df_iqr$logDissAmmonia)
+
+histogram(clean_df_iqr$logDissOrthophos)
+boxplot(clean_df_iqr$logDissOrthophos)
+
+histogram(clean_df_iqr$logDissNitrateNitrite)
+boxplot(clean_df_iqr$logDissNitrateNitrite)
+
+```
 
 # Impute
 

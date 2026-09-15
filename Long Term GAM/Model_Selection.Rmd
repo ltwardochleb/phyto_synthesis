@@ -37,7 +37,7 @@ library(lattice)
 #options(na.action = "na.exclude")
 
 # variables to include:
-c = c("logchla", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
+c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
        "EXPORT","OUT","lagOUT", "SJR", "lagSJR", "Index","lagIndex","DissAmmonia",
        "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
        "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 

@@ -3,11 +3,11 @@
 library(tidyverse)
 
 df1 <- read_csv("Data/Dayflow/dayflow-results-1970-1983.csv") %>%
-  select(Year,Month,Date,SAC,OUT)
+  select(Year,Month,Date,SAC,OUT,SJR,EXPORT)
 df2 <- read_csv("Data/Dayflow/dayflow-results-1984-1996.csv") %>%
-  select(Year,Month,Date,SAC,OUT)
+  select(Year,Month,Date,SAC,OUT,SJR,EXPORT)
 df3 <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv") %>%
-  select(Year,Month,Date,SAC,OUT)
+  select(Year,Month,Date,SAC,OUT,SJR,EXPORT=EXPORTS)
 
 df_tot <- rbind(df1,df2,df3) %>%
   mutate(Season = case_when(Month >= 1 & Month <= 3 ~ "Winter",
@@ -31,9 +31,18 @@ for(i in 1:(length(df_tot$OUT))) {
 
 df_monthmax <- df_tot %>%
   group_by(Year,Month) %>%
-  summarize(SACmax_mo = max(SAC),OUTmax_mo = max(OUT),SACmean_mo = mean(SAC),OUTmean_mo = mean(OUT),
+  summarize(SACmax_mo = max(SAC),OUTmax_mo = max(OUT), SACmean_mo = mean(SAC),OUTmean_mo = mean(OUT),
+            SJRmean_mo = mean(SJR),EXPORTmean_mo = mean(EXPORT),
             SAC_mean_var_m = mean(SAC_flow_var,na.rm=T),OUT_mean_var_m = mean(OUT_flow_var,na.rm=T),
             SAC_max_var_m = max(SAC_flow_var,na.rm=T),OUT_max_var_m = max(OUT_flow_var,na.rm=T)) %>%
+  arrange(Year, Month) %>%
+  mutate(
+    across(
+      c(SACmean_mo, OUTmean_mo, SJRmean_mo,EXPORTmean_mo), 
+      ~ lag(.x, n = 1), 
+      .names = "lag_{.col}"
+    )
+  ) %>%
   mutate(Season = case_when(Month >= 1 & Month <= 3 ~ "Winter",
                             Month >= 4 & Month <= 6 ~ "Spring",
                             Month >= 7 & Month <= 9 ~ "Summer",

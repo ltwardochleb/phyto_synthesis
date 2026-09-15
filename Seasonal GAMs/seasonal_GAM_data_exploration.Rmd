@@ -1,0 +1,273 @@
+---
+title:
+  "Seasonal GAM Data Exploration"
+author:
+  "Ryan Hankins"
+output: 
+  rmdformats::html_clean:
+    lightbox: true
+    thumbnails: false
+    gallery: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, tidy = "styler")
+```
+# Models
+Spring Model 
+
+Model 1: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:logExports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+Model 2: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+Summer Model 
+
+Model 1: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:logExports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+Model 2: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+# Prepare Data {.tabset}
+
+```{r, include=FALSE}
+library(tidyverse)
+library(corrplot)
+library(DT)
+```
+
+
+```{r}
+
+# variables to include in the analysis:
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+# 2022 is the end of the study period
+df <- subset(df,df$Date <= "2022-12-31")
+
+# Changing categorical variables to factors
+# need to change regions to factor farther down so dataframe splitting by region works properly
+#df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+# log transforming chl-a to achieve normal distribution of response variable.
+df$logchla <- log(df$Chlorophyll)
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+df$logSJR <- log(df$SJR)
+
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+df$Chlorophyll <- as.numeric(df$Chlorophyll)
+```
+
+## add lag terms
+```{r}
+# Create monthly lag terms
+df<- df %>% arrange(Year, Month) %>% mutate(across(c(DissAmmonia,logDissAmmonia,DissOrthophos,logDissOrthophos,DissNitrateNitrite,logDissNitrateNitrite,Temperature, Conductivity,logConductivity, SAC, logSAC, SJR, logSJR, EXPORT, OUT, logOUT, Index),
+                                       ~ lag(.x, n = 1), 
+                                       .names = "lag{.col}_mo"))
+
+# Create seasonal lag terms for the log terms
+# This code is taken from clamdata_cleanup_AB_261125.R
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- df %>%
+  group_by(Regions,Year,season) %>%
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(Year = "lagYear",season = "lagseason", Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>% 
+  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite, laglogDissOrthophos, laglogConductivity,
+         laglogSAC,laglogOUT, laglogSJR, laglogDissOrthophos, lagEXPORT)
+
+
+df <- df %>% 
+  mutate(seasonyear = paste0(season,year(Date))) %>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  select(-seasonyear)%>%
+  relocate(Date)
+
+```
+
+## make the final dataset
+
+```{r}
+c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC","lagSAC", "lagSAC_mo", "logSAC", "laglogSAC","laglogSAC_mo", "EXPORT", "lagEXPORT", "lagEXPORT_mo", "OUT","lagOUT","lagOUT_mo", "logOUT", "laglogOUT", "laglogOUT_mo", "SJR", "lagSJR","lagSJR_mo","logSJR", "laglogSJR", "laglogSJR_mo", "Index","lagIndex","DissAmmonia","lagDissAmmonia","lagDissAmmonia_mo","logDissAmmonia","laglogDissAmmonia","laglogDissAmmonia_mo","DissOrthophos","lagDissOrthophos","logDissOrthophos","laglogDissOrthophos","laglogDissOrthophos_mo","DissNitrateNitrite","lagDissNitrateNitrite","logDissNitrateNitrite","laglogDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature","lagTemperature_mo","Conductivity",  "lagConductivity","lagConductivity_mo","logConductivity","laglogConductivity_mo","clam_step")
+
+df <- df %>% subset(select=c)
+
+smr <- df %>% filter(season == "Summer") 
+smr_z <- smr %>% mutate(across(!c(Regions,season,Date,Month, Year, clam_step), ~as.vector(scale(.))))
+spr <- df %>% filter(season == "Spring") %>% subset(select = c)
+spr_z <- spr %>% mutate(across(!c(Regions,, season, Date,Month, Year,clam_step), ~as.vector(scale(.))))
+
+```
+
+
+# Summer {.tabset}
+
+
+## correlation matrix
+
+```{r}
+
+smr_numeric = smr_z %>% select(where(is.numeric))
+smr_numeric = smr_numeric %>% drop_na()
+m = cor(smr_numeric)
+
+m_df <- data.frame(m)
+rmarkdown::paged_table(m_df)
+```
+
+```{r  out.width = "3000px"}
+corrplot(m,
+         method = "color",
+         type = "upper",
+         addCoef.col = "black",
+         number.cex = 0.25,
+         number.digits=2,
+         tl.cex =0.45,
+         tl.col = "black")
+```
+
+## bivariate plots (z-scored)
+
+```{r}
+
+lapply(c, function(x) {
+  ggplot(smr_z, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+```
+
+## bivariate plots by region (z-scored)
+
+```{r}
+
+lapply(c, function(x) {
+  ggplot(smr_z, mapping =aes(x = .data[[x]], y = logchla, color = Regions)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+```
+
+
+
+
+## bivariate plots (non-standardized data)
+
+
+```{r}
+
+lapply(c, function(x) {
+  ggplot(smr, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+
+```
+
+
+
+# Spring {.tabset}
+
+
+## correlation matrix
+
+```{r}
+
+spr_numeric = spr_z %>% select(where(is.numeric))
+spr_numeric = spr_numeric %>% drop_na()
+m = cor(spr_numeric)
+
+m_df <- data.frame(m)
+rmarkdown::paged_table(m_df)
+```
+
+```{r out.width = "3000px"}
+
+corrplot(m,
+         method = "color",
+         type = "upper",
+         addCoef.col = "black",
+         number.cex = 0.25,
+         number.digits=2,
+         tl.cex =0.45,
+         tl.col = "black")
+```
+
+
+## bivariate plots (z-scored)
+
+```{r}
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(spr_z, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+```
+
+## bivariate plots by region (z-scored)
+
+```{r}
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(spr_z, mapping =aes(x = .data[[x]], y = logchla, color = Regions)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+```
+
+
+## bivariate plots (non-standardized data)
+
+```{r}
+
+# linear regression
+lapply(c, function(x) {
+  ggplot(spr, mapping =aes(x = .data[[x]], y = logchla)) +
+    ylab("log(Chlorphyll a)")+
+    geom_smooth(method="lm", se=FALSE)+
+    geom_point()+
+    theme_classic()})
+```
+
