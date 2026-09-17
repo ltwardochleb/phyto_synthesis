@@ -78,8 +78,7 @@ df$logEXPORT <- log(df$EXPORT)
 
  df <- subset(df, select = c) #%>%
     #drop_na()
-# Make sure all dates are present for lag variables later on.
- df %>% complete(Date = seq(min(Date), max(Date), by = "1 month"))
+
 ```
 
 ## Remove outliers based on z-score
@@ -206,6 +205,9 @@ df_list_lag <- lapply(regional_imp_dfs, function(y){
     
     # Sort chronologically within each group
     arrange(Regions, Date) %>%
+    
+    # Make sure all dates are present for lag variables later on.
+    complete(Date = seq(min(Date), max(Date), by = "1 month")) %>%
     
     # Lag all numeric columns by 3 rows
     mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag{col}")) %>%
@@ -581,9 +583,9 @@ Creates the LD curves for each parameter and model
 
 ldcurve <- function(model_name,param,xlab_name="parameter label") {
   
-  model_name <- bm4.po4.imp1.glm1
-  param <- "laglogDissOrthophos"
-  xlab_name <- "3-month Lag - DissOrthophos"
+  # model_name <- bm4.po4.imp1.glm1
+  # param <- "laglogDissOrthophos"
+  # xlab_name <- "3-month Lag - DissOrthophos"
   
   #STEP 1: Create a dataframe that holds all parameters but one constant at their median.
   
