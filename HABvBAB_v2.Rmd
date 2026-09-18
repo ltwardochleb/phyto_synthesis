@@ -143,6 +143,8 @@ imp <- mice(
   maxit = 1,
   printFlag = FALSE
 )
+
+rm(where)
 ```
 
 ```{r}
@@ -237,7 +239,7 @@ depths_wide <- emp %>%
 wide <- left_join(depths_wide, values_wide,by = id_cols)
 
 # Perry: 4 fewer cols bc removed string analytes
-wide <- wide %>% mutate(across(c(4:30,32:40,44:50), as.numeric))
+wide <- wide %>% mutate(across(c(4:50), as.numeric))
 
 dat1 <- data.frame(Survey="DWR-EMP",
                    Station=wide$Station,
@@ -406,7 +408,7 @@ dat2 <- data.frame(Survey="USGS-BP",
 
 wq <- rbind(dat1,dat2)
 wq$Longitude <- as.numeric(wq$Longitude)
-rm(binned1,binned2,cruiseall,dat1,dat2,depths_wide,emp,joined,nutrients,stat,values_wide,wide,wide1,wide2,x,id_cols)
+rm(binned1,binned2,cruiseall,dat1,dat2,depths_wide,emp,joined,nutrients,stat,values_wide,wide,wide1,wide2,id_cols)
 
 #--------------------------------------------------
 # Load EMP benthic data
@@ -578,8 +580,8 @@ dat1 <- dat %>% filter(Region %in% c("Central", "Confluence", "Suisun Bay") &
                         Date > "2007-12-31" &    
                         Survey %in% c("DWR-EMP","USGS-BP"))   
 
-# Perry: rn, from "Datetime" to "VSS"
-dat1 <- dat1 %>% ungroup()%>% filter(!if_all(24:67, is.na)) # Screens out PESP samples without corresponding WQ data
+# Perry: rn, from "Temperature" to "VSS"
+dat1 <- dat1 %>% ungroup()%>% filter(!if_all(28:67, is.na)) # Screens out PESP samples without corresponding WQ data
 dat1 <- dat1 %>% arrange(Date)
 ```
 
@@ -627,8 +629,31 @@ rm(p1,p2,p3)
 "HAB" if MVI = 3-5 AND occurs from June to October. 
 "BAB" if MVI = 1-2 from June to October OR if the sample was collected during a bloom between November and May.
 "No bloom" if sample was collected between November and May and chlorophyll is below the bloom threshold.
-```{r, warning=FALSE, message=FALSE}
 
+Perry: quick checks
+```{r}
+# check for MC scores that aren't covered
+# # all are 2.5, maybe round to 3?
+out_mc <- dat1 %>% filter(Microcystis > 2, Microcystis < 3)
+unique(out_mc$Microcystis)
+```
+```{r}
+# check no MC data
+dat1 %>%
+  filter(is.na(Microcystis)) %>%
+  distinct(Station)
+
+dat1 %>%
+  filter(
+    Survey == 'DWR-EMP',
+    is.na(Microcystis),
+    !str_detect(Station, 'LSZ')
+  )
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# Perry: round "2.5" to "3"
 dat1 <- dat1 %>%
   group_by(Region) %>%
   mutate(chl_threshold = mean(Chlorophyll, na.rm = TRUE) + sd(Chlorophyll, na.rm = TRUE)) %>%
@@ -636,7 +661,7 @@ dat1 <- dat1 %>%
   mutate(
     mvi_class = case_when(
       is.na(Microcystis) ~ NA_character_,
-      Microcystis >= 3 & Month %in% 6:10 ~ "HAB",
+      Microcystis >= 3 & Month %in% 6:10 ~ "HAB", # change to > 2?
       Microcystis <= 2 & Month %in% 6:10 ~ "BAB",
       Month %in% c(11, 12, 1:5) ~ "BAB",
       TRUE ~ NA_character_
@@ -648,6 +673,29 @@ dat1 <- dat1 %>%
     )
   )
 
+dat1 %>%
+  summarize(
+    mc_na = sum(is.na(Microcystis)),
+    month_na = sum(is.na(Month)),
+    month_issue = sum(
+      !is.na(Month) & !(Month %in% 1:12)
+    ),
+    mc_bw_2_3 = sum(
+      Month %in% 6:10 &
+        Microcystis > 2 &
+        Microcystis < 3,
+      na.rm = TRUE
+    )
+  )
+
+dat1 %>%
+  filter(
+    is.na(Microcystis) |
+      is.na(Month) |
+      (!is.na(Month) & !(Month %in% 1:12)) |
+      (Month %in% 6:10 & Microcystis > 2 & Microcystis < 3)
+  ) %>%
+  select(Month, Microcystis, bloom, mvi_class)
 ```
 
 

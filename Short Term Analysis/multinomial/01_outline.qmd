@@ -1,0 +1,1435 @@
+# Next to Do
+
+- switch temp, flow, other variables not in a feedback loop to contemporary values
+
+- for flow, add "seasonal" lags (3 months before; double check spacing)
+
+  - also try seasonal average lags (but might have correlation issues)
+
+- try with NDOI instead of the individual flow variables
+
+- threshold: bloom/no bloom, HAB/BAB
+
+# Goal
+
+Causal inference analysis via multinomial logistic regression on the short-term HAB data set to determine main contributors to different bloom classifications (No Bloom, BAB, HAB).
+
+The primary level of interest is **HAB**, with the primary questions being:
+
+- Q1: what about HAB conditions differs from the non-harmful No Bloom and BAB levels
+
+- Q2: where do these conditions occur in space (Region) and time (Season)
+
+A primary assumption is that the ideal conditions for each class are *not* dependent on Region or Season, which are proxy variables for possible regimes that are defined by other variables. They are instead important units of interest for management decisions.
+
+- as a consequence, many variables are confounded by these proxy variables, as they partially define their effect on the response
+
+# Data
+
+```{r}
+library(tidyverse)
+library(here)
+library(nnet)
+library(mgcv)
+library(corrplot)
+library(sandwich)
+library(lmerTest)
+library(lme4)
+library(nnet)
+
+load(here::here('Short Term Analysis/st_data/05_transforms.Rda'))
+```
+
+```{r}
+# custom functions for later (flatten the cluster covariance matrices)
+coef.multinom_flat <- function(object, ...) {
+  B <- NextMethod()
+  v <- as.vector(t(B))
+  names(v) <- paste(rep(rownames(B), each = ncol(B)),
+                    rep(colnames(B), times = nrow(B)), sep = ':')
+  v
+}
+
+vcov.multinom_flat <- function(object, ...) attr(object, 'V_cl')
+```
+
+```{r}
+# custom functions for later (flatten the cluster covariance matrices)
+coef.multinom_flat <- function(object, ...) {
+  B <- NextMethod()
+  v <- as.vector(t(B))
+  names(v) <- paste(rep(rownames(B), each = ncol(B)),
+                    rep(colnames(B), times = nrow(B)), sep = ':')
+  v
+}
+
+vcov.multinom_flat <- function(object, ...) attr(object, 'V_cl')
+```
+
+The majority of data is collected on a **monthly time step per Station**, which are nested within Region. The exact day within a month that a Station was visited may differ between Stations.
+
+**Timescale**: Data is collected from 2015 - 2024 (nine years). Not all variables had data collected at the same time-step; this is relevant because it affects model design. We split the data into three categories:
+
+- **station-level**: collected once per month for each station
+
+  - nutrient variables, phytoplankton variables, bloom classification
+
+- **region-level**: collected once per month for an entire region; all stations within a region, per month, share the same value, regardless of the day they were collected
+
+  - clam variables
+
+- **date-level**: collected once per day for the entire Delta. all station data collected on the same day, regardless of region, have the same value
+
+  - flow variables
+
+Note that there is missing data in the beginning of the time series for some stations.
+
+**Region**: There are 3 regions in the data set with a slightly unequal number of stations (4-6). No region has more than six stations.
+
+```{r}
+df_mvi %>%
+  distinct(Region, Station) %>%
+  summarise(Stations = paste(sort(Station), collapse = ', '),
+            n = n(),
+            .by = Region)
+```
+
+## Response Variable
+
+**Bloom Classification:** Contains three levels (No Bloom, BAB, HAB). MVI index was the primary mechanism for classification (specifics in `HABvBAB_v2.Rmd`).
+
+Note that this is a very unbalanced design; there are substantially more no bloom events than BAB or HAB, with BAB having the least amount.
+
+```{r}
+table(as.factor(df_mvi$mvi_class))
+```
+
+## Proxy Variables
+
+Proxy variables cannot directly answer Q1, as they're an amalgamation of the variables that directly impact bloom classification. However, they're of direct importance to Q2.
+
+### Season
+
+There are four seasons in the data set. For all, there are substantially more bloom events than HAB or BAB.
+
+- **Autumn**: a few more HABs than BABs
+
+- **Spring**: a few more BABs than HABs
+
+- **Summer**: substantially more HABs than BABs
+
+- **Winter**: more BABs than HABs; there are no HABs at all, by design
+
+  - cannot do HAB vs BAB/no bloom comparison for winter, can do BAB vs no bloom...maybe
+
+```{r}
+df_mvi %>%
+  count(Season, mvi_class) %>%
+  ggplot(aes(x = Season, y = n, fill = mvi_class)) +
+  geom_col(position = 'dodge') +
+  theme_bw()
+```
+
+```{r}
+table(df_mvi$Season, as.factor(df_mvi$mvi_class), useNA = 'ifany')
+```
+
+```{r}
+df_mvi %>%
+  mutate(
+    mvi_class = recode(
+      mvi_class,
+      'No bloom' = 'NB'
+    )
+  ) %>%
+  count(Season, Region, mvi_class, name = 'n') %>%
+  tidyr::pivot_wider(
+    names_from = mvi_class,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  select(Season, Region, NB, BAB, HAB) %>%
+  arrange(desc(HAB))
+```
+
+#### Modeling Note
+
+Many variables are correlated with season (ie. have seasonal cycles). Based on the Q1, season is treated as a label for a set of co-occurring mechanisms rather than being the mechanism itself.
+
+### Region
+
+There are 3 Regions in the data set. For all, there are substantially more bloom events than HAB or BAB.
+
+- **Central and Confluence**: more HABs than BABs
+
+- **Suisun Bay**: more BABs than HABs; only 6 HABs overall
+
+```{r}
+df_mvi %>%
+  count(Region, mvi_class) %>%
+  ggplot(aes(x = Region, y = n, fill = mvi_class)) +
+  geom_col(position = 'dodge') +
+  theme_bw()
+```
+
+```{r}
+table(df_mvi$Region, as.factor(df_mvi$mvi_class), useNA = 'ifany')
+```
+
+### Model Use
+
+How these are implemented in the model is dependent on the ultimate question and how the explanatory variables relate to it; ideally, there's a relatively even spread within levels of the two variables.
+
+- **leave out**: 'What mechanisms predict blooms?'
+  - differences get absorbed by whatever mechanisms correlate with them
+  - right choice if you want mechanisms and see Region/Season as a bundle of them
+  - *issue:* a variable can look causal when it's just tracking region
+    - a good proxy if it's a good proxy for the real variable, misleading if it isn't
+- **fixed variable**: 'Within a region/season, what mechanisms predict blooms?'
+  - kills any mechanism that doesn't vary within a region or season
+  - also gives you the region/season effects themselves, if you want them
+  - *issue*: strips out real signal along with the confounding, and can't tell you which it removed
+- **random variable**: same question as fixed, treating regions as draws from a population
+  - with 3 regions and 3 seasons, too few levels to estimate a variance; not really viable
+  - *issue*: coefficients become cluster-conditional; additionally, same issue as fixed variables
+- **cluster error**: 'What mechanisms predict blooms, with honest uncertainty?'
+  - coefficients unchanged; only the SEs widen
+  - *issue*: does nothing about confounding
+
+To check how the variables relate:
+
+```{r}
+rel_vari <- c(
+  'Temperature_lag',
+  'Temperature',
+  'log_Conductivity_lag',
+  'log_Conductivity',
+  'log_Turbidity_lag',
+  'log_DissSilica_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DIN_lag',
+  # 'log_DON_lag',
+  # 'log_TDN_lag',
+  # 'frac_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissOrthophos_lag',
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_graze_rate'
+)
+
+for (v in rel_vari) {
+  
+  ## REGION
+  fit_region <- lm(
+    reformulate('Region', response = v),
+    data = df_mvi
+  )
+  
+  p_region  <- anova(fit_region)[['Pr(>F)']][1]
+  r2_region <- summary(fit_region)$r.squared
+  
+  p1 <- ggplot(df_mvi, aes(x = Region, y = .data[[v]])) +
+    geom_boxplot(outlier.shape = NA, fill = 'lightblue') +
+    geom_jitter(width = 0.15, alpha = 0.3, size = 2, shape = 21, aes(fill = Season)) +
+    labs(
+      title = paste(v, 'by Region'),
+      subtitle = sprintf('R2 = %.2f; p = %.3g', r2_region, p_region),
+      x = 'Region',
+      y = v
+    ) +
+    theme_bw()
+
+  print(p1)
+
+
+  ## SEASON
+  fit_season <- lm(
+    reformulate('Season', response = v),
+    data = df_mvi
+  )
+
+  p_season  <- anova(fit_season)[['Pr(>F)']][1]
+  r2_season <- summary(fit_season)$r.squared
+
+  p2 <- ggplot(df_mvi, aes(x = Season, y = .data[[v]])) +
+    geom_boxplot(outlier.shape = NA, fill = 'pink') +
+    geom_jitter(width = 0.15, alpha = 0.3, size = 2, shape = 21, aes(fill = Region)) +
+    labs(
+      title = paste(v, 'by Season'),
+      subtitle = sprintf('R2 = %.2f; p = %.3g', r2_season, p_season),
+      x = 'Season',
+      y = v
+    ) +
+    theme_bw()
+
+  print(p2)
+  
+  ## OVERALL (w/ Suisun Bay)
+  
+  p3 <- ggplot(df_mvi, aes(x = mvi_class, y = .data[[v]])) +
+    geom_boxplot(outlier.shape = NA, fill = NA) +
+    geom_jitter(width = 0.2, alpha = 0.3, size = 2, shape = 21, aes(fill = Season)) +
+    labs(
+      title = paste(v, 'Overall (w/ SB)'),
+      y = v
+    ) +
+    theme_bw()
+  
+  print(p3)
+  
+  ## OVERALL (w/o Suisun Bay)
+  check_plt <- df_mvi %>% filter(Region != 'Suisun Bay')
+  
+  p4 <- ggplot(check_plt, aes(x = mvi_class, y = .data[[v]])) +
+    geom_boxplot(outlier.shape = NA, fill = NA) +
+    geom_jitter(width = 0.2, alpha = 0.3, size = 2, shape = 21, aes(fill = Season)) +
+    labs(
+      title = paste(v, 'Overall (w/o SB)'),
+      y = v
+    ) +
+    theme_bw()
+  
+  print(p4)
+  
+  ## TIMESERIES
+  
+  ts_df <- df_mvi %>%
+    filter(!is.na(.data[[v]])) %>%
+    group_by(YearMonth, Region) %>%
+    summarize(
+      mean_val = mean(.data[[v]]),
+      se_val   = sd(.data[[v]]) / sqrt(n()),
+      .groups  = 'drop'
+    )
+  
+  p5 <- ggplot(ts_df, aes(x = YearMonth, y = mean_val, color = Region, fill = Region)) +
+    geom_ribbon(aes(ymin = mean_val - se_val, ymax = mean_val + se_val), alpha = 0.15, color = NA) +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 1, alpha = 0.6) +
+    scale_x_date(date_breaks = '1 year', date_labels = '%Y') +
+    theme_bw() +
+    theme(
+      panel.grid.major.x = element_line(color = 'grey40', linewidth = 0.5),
+      panel.grid.minor.x = element_blank()) +
+    ylab(v)
+  
+  print(p5)
+}
+```
+
+```{r}
+df_summer <- df_mvi %>% filter(Season == 'Summer' & Region != 'Suisun Bay')
+
+ggplot(df_summer, aes(x = mvi_class, y = log_DIN_lag)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2, shape = 21, aes(fill = Region)) +
+  theme_bw()
+```
+
+```{r}
+df_summer <- df_mvi %>% filter(Season == 'Summer' & Region != 'Suisun Bay')
+
+ggplot(df_summer, aes(x = mvi_class, y = frac_NH4_lag)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2, shape = 21, aes(fill = Region)) +
+  theme_bw()
+```
+
+**Good with Region, Bad with Season:** Temperature, SAC, SJR, OUT
+
+**Bad with Region, Good with Season**: Conductivity, Turbidity, GrazeRate
+
+**Good with Both**: DissSilica, DissAmmonia, DissNN, DIN, DON, TDN, DissOrthophos, EXPORTS
+
+If all variables were good across both variables, than fixed effects for Region/Season would only account for additional variation not explained by the model variables. However, since multiple variables are mediated by the proxies, they're liable to be confounding variables for those select ones.
+
+**Orthophosphate note:** literature convention is that P is not a limiting nutrient in the Delta. in this data set, HABs and BABs do only occur with higher P values; however, the lower values are almost all in seasons where blooms don't occur to begin with
+
+## Date Variables
+
+### Flow
+
+There are four flow variables: SAC, SJR, EXPORTS, and OUT. These can further be broken down into inputs vs outputs:
+
+- inputs: SAC, SJR, EXPORTS
+- output: OUT (modeled; correlates with the sum of inputs)
+
+We care about the contribution of individual inputs, which are correlated to roughly the same degree, regardless of Region. SJR and SAC are highly correlated (\~0.80), though neither are especially correlated with EXPORTS (\~0.35).
+
+```{r}
+df_mvi %>%
+  dplyr::select(log_SAC, log_SJR, log_EXPORTS) %>%
+  stats::cor(use = 'pairwise') %>% round(2)
+```
+
+```{r}
+df_mvi %>%
+  split(.$Region) %>%
+  purrr::map(~ .x %>%
+               dplyr::select(log_SAC, log_SJR, log_EXPORTS) %>%
+               stats::cor(use = 'pairwise') %>%
+               round(2))
+```
+
+```{r}
+df_mvi %>%
+  ggplot(aes(Date, log_OUT, color = Season)) +
+  geom_point(size = 1) +
+  theme_minimal()
+```
+
+**Conclusion**: use all three imports in the model, paying attention to SAC/SJR multicollinearity. Contrast
+
+## Region Variables
+
+### Clams
+
+There are three clam variables: biomass, graze rate, and filtration rate. Clams primarily relate to blooms because they feed on phytoplankton, which are a major component of bloom events.
+
+The three variables are correlated, with filtration rate and grazing rate essentially being transformations of each other. Biomass is moderately correlated with both.
+
+```{r}
+df_mvi %>%
+  dplyr::select(log_clam_biomass, log_graze_rate, log_filt_rate) %>%
+  stats::cor(use = 'pairwise') %>% round(2)
+```
+
+```{r}
+df_mvi %>%
+  ggplot(aes(log_filt_rate, log_graze_rate, color = Region)) +
+  geom_line() +
+  geom_point(size = 1) +
+  theme_minimal()
+```
+
+```{r}
+df_mvi %>%
+  ggplot(aes(log_clam_biomass, log_filt_rate, color = Region)) +
+  geom_line() +
+  geom_point(size = 1) +
+  theme_minimal()
+```
+
+One note is that, since it's coarser, there's only one data point per region-time. Therefore, if all variation is between regions, most regional adjustments will mask the signal, as there would be no statistical difference between grazing and region, and there's no way to make conclusions about the variable. It's worth checking if within-region variation exists.
+
+```{r}
+df_mvi %>%
+  ggplot(aes(Date, log_graze_rate, color = Region)) +
+  geom_line() +
+  geom_point(size = 1) +
+  theme_minimal()
+
+df_mvi %>%
+  distinct(Region, Year_num, Month_num, log_graze_rate) %>%
+  group_by(Region) %>%
+  summarize(mean = mean(log_graze_rate, na.rm = TRUE),
+            sd_within = sd(log_graze_rate, na.rm = TRUE),
+            n = n())
+```
+
+It does, and it appears to be seasonal.
+
+**Conclusion**: Grazing rate is the most biologically relevant of the three variables and should be included in the models. The seasonal nature of its within-region variation will likely confound with other seasonally-driven variables.
+
+## Station Variables
+
+### Nutrients
+
+**Excluded**:
+
+- Chloride/TDS/Calcium: related to conductance, not blooms
+- Chlorophyll/Pheophytin/TOC/DOC/VSS: bloom byproducts, not drivers
+- TDS/TKN: an aggregate of individual components
+
+**Possible**:
+
+N and P are the main nutrients used by phytoplankton. Additionally, diatoms are composed of Si. Therefore, possible nutrients to include are:
+
+- DissAmmonia and DissNitrateNitrite (inorganic N)
+
+- DON (organic N)
+
+- DissOrthophos (P)
+
+- DissSilica (Si)
+
+```{r}
+nut_vars <- c('log_DissAmmonia', 'log_DissNitrateNitrite', 'log_DissOrthophos',
+              'log_DON', 'log_DIN', 'log_TDN', 'log_TKN', 'log_DissSilica', 'log_TDS', 'log_DissChloride',
+              'log_Chlorophyll')
+
+df_mvi %>%
+  dplyr::select(dplyr::all_of(nut_vars)) %>%
+  stats::cor(use = 'pairwise.complete.obs') %>%
+  corrplot(method = 'color', type = 'upper', addCoef.col = 'black',
+           number.cex = 0.7, tl.col = 'black', tl.srt = 45,
+           diag = FALSE, order = 'hclust')
+```
+
+**Nitrogen**: DissAmmonia is known to be the most relevant of the three types of N that there's data for. However, using DissAmmonia directly in the model confounds the type of dissolved N with the total amount. This can be addressed by decomposition, with four possible models:
+
+*Note: Seeing conflicting info about how much DON matters, but I don't think it hurts to keep it in for now.*
+
+- **Two-stage (TDN + NH4 fraction):** N load, plus ammonia's share of the entire dissolved pool. Treats the organic pool as part of the denominator without asking separately about it
+
+- **Three-stage (TDN + DIN fraction + NH4 fraction):** N load, then two nested compositional steps: how much of the pool is inorganic, and, within that, how much is ammonia. Isolates the ammonia-vs-NN question from the organic-vs-inorganic one
+
+- **Components (DIN + DON + NH4 fraction):** raw concentrations, no decomposition; asks whether the individual pools have distinguishable effects
+
+- **Only DissAmmonia:** the marginal association between ammonia concentration and the outcome, with load and N species left confounded
+
+The composite variables are calculated by:
+
+- Total Dissolved N: DON + DissAmmonia + DissNitrateNitrite
+
+- DIN fraction: fraction of TDN that's inorganic (ammonia + NN) *(optional)*
+
+- DissAmmonia (TDN) fraction: fraction of TDN that's ammonia
+
+- DissAmmonia (DIN) fraction: fraction of DIN that's ammonia
+
+```{r}
+nutri <- c('log_DissAmmonia', 'log_TDN', 'log_DIN', 'frac_NH4', 'frac_DIN','log_DissOrthophos', 'log_DissNitrateNitrite')
+
+
+df_plot <- df_mvi %>%
+  arrange(Station, Date) %>%
+  group_by(Station) %>%
+  mutate(
+    prev_class = dplyr::lag(mvi_class),
+    next_class = dplyr::lead(mvi_class),
+    prev_prev_class = dplyr::lag(prev_class),
+    next_next_class = dplyr::lead(next_class),
+    plot_class = case_when(
+      mvi_class == 'HAB' ~ 'HAB',
+      mvi_class == 'No bloom' & next_class == 'HAB' ~ 'Before HAB',
+      mvi_class == 'No bloom' & prev_class == 'HAB' ~ 'After HAB',
+      mvi_class == 'No bloom' & next_class == 'No bloom' & next_next_class == 'HAB' ~ 'prev prev HAB',
+      mvi_class == 'No bloom' & prev_class == 'No bloom' & prev_prev_class == 'HAB' ~ 'after after HAB',
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(plot_class)) %>%
+  mutate(
+    plot_class = factor(
+      plot_class,
+      levels = c('prev prev HAB', 'Before HAB', 'HAB',
+                 'After HAB', 'after after HAB')
+    )
+  )
+
+for (i in nutri) {
+  
+  p <- ggplot(df_plot, aes(x = plot_class, y = .data[[i]])) +
+    geom_boxplot() +
+    geom_jitter(width = 0.12, alpha = 0.4) +
+    labs(
+      x = NULL,
+      y = i
+    ) +
+    theme_bw()
+  
+  print(p)
+}
+```
+
+```{r}
+ggplot(df_mvi, aes(x = frac_NH4)) +
+  geom_histogram(bins = 40, fill = 'lightblue', color = 'black') +
+  labs(x = 'Ammonium fraction of DIN', y = 'Samples') +
+  theme_bw()
+```
+
+### Other
+
+Temperature and Conductivity are the other main variables for consideration. Both of these are moderately correlated with Flow.
+
+```{r}
+df_mvi %>%
+  select(Temperature, log_Conductivity, log_Turbidity, log_OUT, log_graze_rate) %>%
+  stats::cor(use = 'pairwise') %>%
+  round(2)
+```
+
+```{r}
+df_mvi %>%
+  ggplot(aes(log_Conductivity, log_Turbidity, color = Region)) +
+  geom_point(size = 1) +
+  theme_minimal()
+```
+
+```{r}
+cor(
+  df_mvi$log_Conductivity,
+  df_mvi$log_Turbidity,
+  use = 'complete.obs'
+)
+```
+
+# Mediators
+
+The Date and Region variables are measured on a coarser spatial or temporal resolutions than the station variables. In the data set, this is represented by repeating data across rows. In a naive regression, there are two main issues with this:
+
+- associations at different levels (eg. regional vs station) can be conflated; this is particularly bad here because it can mask the effect of coarser-level variables
+
+- repeated values are treated as independent information and lead to artificial SE estimates
+
+## Issue 1
+
+For the first issue, transforming variables into their higher-level means and deviations (eg. Bell et al. (2018)) can accurately adjust for this. This can be done by splitting station-level variables into their regional mean and deviance components (we can do this for Date as well, but it's not as necessary, for sensitivity analysis reasons that aren't shown here).
+
+Below is an simplified example looking at the HAB vs. No Bloom binary:
+
+$$X_{srt} = \text{X's value per sampling event (station/region/time)}$$
+
+$$X_{srt} = \text{station dev from mean} + \text{region mean}$$
+
+$$X_{srt} = d_{srt}+ \bar{X}_{rt}$$
+
+$$d_{srt} = X_{srt} - \bar{X}_{rt}$$
+
+$$X_{srt} = (X_{srt} - \bar{X}_{rt}) + \bar{X}_{rt}$$
+
+$$ \text{repeat steps for further decomposition...}$$
+
+$$X_{srt} = (X_{srt} - \bar{X}_{rt}) + (\bar{X}_{rt}-\bar{X}_{r})+ (\bar{X}_{r}-\bar{X}) + \bar{X}$$
+
+$$X_{srt} = d_{srt} + d_{rt} + d_r + \bar{X}$$
+
+$$X_{srt} = \text{within region/time dev} + \text{within region, over time dev} + \text{within region dev} + \text{grand mean (a constant)}$$
+
+$$ \text{since } \bar{X} \text{ is a constant, in a regression, this is absorbed by the intercept, and the additional model terms simplify to} $$ $$X_{srt} = (X_{srt} - \bar{X}_{rt}) + (\bar{X}_{rt}-\bar{X}_{r}) + \bar{X}_{r}$$
+
+$$X_{srt} = d_{srt} + d_{rt} + \bar{X}_r$$
+
+$$X_{srt} = \text{within region/time dev} + \text{within region, over time dev} + \text{regional mean (b/w region effect)}$$
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+region_time_vars <- c(
+  'log_graze_rate'
+)
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT'
+)
+
+# DATA
+
+df_binary <- df_mvi %>%
+  filter(
+    mvi_class %in% c('HAB', 'No bloom')
+  ) %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  )
+
+# WITHIN RT (region-month-year)
+
+df_binary <- df_binary %>%
+  group_by(Region, region_time) %>%
+  mutate(
+    across(
+      all_of(station_vars),
+      list(
+        rt_mean = ~ mean(.x, na.rm = TRUE),  # region-time mean (Xbar_rt)
+        within_rt = ~ .x - mean(.x, na.rm = TRUE) # dev per station (d_srt)
+      ),
+      .names = '{.col}_{.fn}'
+    )
+  ) %>%
+  ungroup()
+
+
+# BETWEEN REGION (regional mean)
+
+rt_mean_vars <- paste0(station_vars, '_rt_mean')
+
+# distinct so mean is only used once (it's repeated over station rows)
+region_means <- df_binary %>%
+  distinct(
+    Region,
+    region_time,
+    across(all_of(rt_mean_vars))
+  ) %>%
+  group_by(Region) %>%
+  summarize(
+    across(
+      all_of(rt_mean_vars),
+      ~ mean(.x, na.rm = TRUE),  # regional mean (Xbar_r)
+      .names = '{.col}_bw_region'
+    ),
+    .groups = 'drop'
+  ) %>%
+  rename_with(
+    ~ sub('_rt_mean_bw_region$', '_bw_region', .x)
+  )
+
+# # add to df
+df_binary <- df_binary %>%
+  left_join(
+    region_means,
+    by = 'Region'
+  )
+
+# OVER RT
+
+# # over_rt = rt_mean - bw_region (d_rt = Xbar_rt - Xbar_r)
+
+for (v in station_vars) {
+  
+  df_binary[[paste0(v, '_over_rt')]] <-
+    df_binary[[paste0(v, '_rt_mean')]] -
+    df_binary[[paste0(v, '_bw_region')]]
+}
+
+# GRAZING (region-level variable)
+
+# # already at rt level; no within-rt, has over_rt/bw_region
+
+graze_split <- df_binary %>%
+  distinct(
+    Region,
+    region_time,
+    log_graze_rate_lag
+  ) %>%
+  group_by(Region) %>%
+  mutate(
+    log_graze_rate_lag_bw_region =
+      mean(log_graze_rate_lag, na.rm = TRUE),
+    
+    log_graze_rate_lag_over_rt =
+      log_graze_rate_lag -
+      log_graze_rate_lag_bw_region
+  ) %>%
+  ungroup()
+
+
+df_binary <- df_binary %>%
+  left_join(
+    graze_split,
+    by = c(
+      'Region',
+      'region_time',
+      'log_graze_rate_lag'
+    )
+  )
+
+```
+
+Examine variance decomposition; equal contribution across all parts -\> can put in the model as one variable; difference contributions -\> most important ones are likely most relevant
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+variance_check <- do.call(
+  rbind,
+  lapply(c(station_vars, 'log_graze_rate_lag'), calc_variance_decomp, df = df_binary)
+)
+
+variance_check
+```
+
+```{r}
+m_binary_wb <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_lag_over_rt + log_Conductivity_lag_bw_region +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_binary,
+  family = binomial
+)
+
+summary(m_binary_wb)
+```
+
+```{r}
+m_binary_wb1 <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_over_rt,
+  
+  data = df_binary,
+  family = binomial
+)
+
+summary(m_binary_wb1)
+```
+
+```{r}
+library(car)
+vif(m_binary_wb1)
+```
+
+```{r}
+library(DHARMa)
+
+res_wb <- simulateResiduals(
+  fittedModel = m_binary_wb,
+  n = 1000
+)
+
+plot(res_wb)
+```
+
+```{r}
+testUniformity(res_wb)
+testDispersion(res_wb)
+testOutliers(res_wb)
+```
+
+```{r}
+df_model <- df_binary[as.numeric(rownames(model.frame(m_binary_wb))), ]
+
+plotResiduals(
+  res_wb,
+  df_model$Station
+)
+
+plotResiduals(
+  res_wb,
+  df_model$Region
+)
+
+
+plotResiduals(
+  res_wb,
+  df_model$Season
+)
+```
+
+```{r}
+res_rt <- recalculateResiduals(
+  res_wb,
+  group = df_model$region_time
+)
+
+plot(res_rt)
+testUniformity(res_rt)
+```
+
+```{r}
+res_d <- recalculateResiduals(
+  res_wb,
+  group = df_model$Date
+)
+
+plot(res_d)
+testUniformity(res_d)
+```
+
+```{r}
+plot(m_binary_wb, which = 4)
+```
+
+```{r}
+# check residual autocorrelation by station
+df_model$dh_resid <- res_wb$scaledResiduals
+
+station_ac <- lapply(
+  split(df_model, df_model$Station),
+  function(d) {
+
+    d <- d[order(d$Date), ]
+
+    test <- Box.test(
+      d$dh_resid,
+      lag = 1,
+      type = 'Ljung-Box'
+    )
+
+    data.frame(
+      n = nrow(d),
+      p_value = test$p.value
+    )
+  }
+)
+
+station_ac <- do.call(rbind, station_ac)
+
+station_ac$Station <- rownames(station_ac)
+rownames(station_ac) <- NULL
+
+station_ac$p_adj <- p.adjust(
+  station_ac$p_value,
+  method = 'BH'
+)
+
+station_ac
+```
+
+Note the differing results, particularly the 'increased significance' of grazing rate. Since these are nested models (the not-split model is a special case of the split model), this can be confirmed using the LRT/AIC/BIC.
+
+## Issue 2
+
+```{r}
+df_binary %>%
+  summarize(
+    n_region_time = n_distinct(region_time),
+    n_date = n_distinct(Date)
+  )
+```
+
+```{r}
+# one-way: region_time only
+V_rt <- vcovCL(
+  m_binary_wb,
+  cluster = ~ Date,
+  cadjust = TRUE
+)
+
+# two-way: region_time + Date
+V_rt_date <- vcovCL(
+  m_binary_wb,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+data.frame(
+  SE_rt = sqrt(diag(V_rt)),
+  SE_rt_date = sqrt(diag(V_rt_date)),
+  ratio = sqrt(diag(V_rt_date)) / sqrt(diag(V_rt))
+)
+```
+
+```{r}
+summary(m_binary_wb)
+```
+
+```{r}
+lmtest::coeftest(
+  m_binary_wb1,
+  vcov. = V_rt_date
+)
+```
+
+Try RE, but it can't converge.
+
+```{r}
+library(lme4)
+
+m_binary_re <- glmer(
+  HAB ~
+    Temperature_lag_over_rt +
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    log_Conductivity_lag_over_rt + log_Conductivity_lag_bw_region +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt +
+    log_DissOrthophos_lag_over_rt +
+
+    log_graze_rate_lag_over_rt +
+    
+    
+    (1 | region_time) +
+    (1 | Date),
+  data = df_binary,
+  family = binomial
+)
+
+summary(m_binary_re)
+```
+
+# Region Specific
+
+```{r}
+df_cencon <- df_binary %>% filter(Region != 'Suisun Bay')
+
+m_binary_cencon <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_cencon,
+  family = binomial
+)
+
+summary(m_binary_cencon)
+
+V_cencon_rtdate <- vcovCL(
+  m_binary_cencon,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_cencon,
+  vcov. = V_cencon_rtdate
+)
+```
+
+```{r}
+df_central <- df_binary %>% filter(Region == 'Central')
+
+m_binary_cen <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_central,
+  family = binomial
+)
+
+summary(m_binary_cen)
+
+V_cen_rtdate <- vcovCL(
+  m_binary_cen,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_cen,
+  vcov. = V_cen_rtdate
+)
+```
+
+```{r}
+df_confluence <- df_binary %>% filter(Region == 'Confluence')
+
+m_binary_con <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_confluence,
+  family = binomial
+)
+
+V_con_rtdate <- vcovCL(
+  m_binary_con,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+summary(m_binary_con)
+
+lmtest::coeftest(
+  m_binary_con,
+  vcov. = V_con_rtdate
+)
+```
+
+# Seasonal
+
+Only summer; other seasons don't converge.
+
+```{r}
+df_summer <- df_binary %>% filter(Season == 'Summer')
+
+m_binary_sum <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    
+    log_Conductivity_lag_within_rt + log_Conductivity_lag_bw_region +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_summer,
+  family = binomial
+)
+
+summary(m_binary_sum)
+
+V_sum_rtdate <- vcovCL(
+  m_binary_sum,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sum,
+  vcov. = V_sum_rtdate
+)
+```
+
+# SEM
+
+```{r}
+m_binary_sem1 <- glm(
+  HAB ~
+    Temperature_lag_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_lag_over_rt + log_Conductivity_lag_bw_region +
+    
+    log_SAC_lag + log_SJR_lag + log_EXPORTS_lag +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt + 
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    
+    log_graze_rate_lag_over_rt,
+  
+  data = df_binary,
+  family = binomial
+)
+
+summary(m_binary_sem1)
+
+V_sum_rtdate <- vcovCL(
+  m_binary_sem1,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem1,
+  vcov. = V_sum_rtdate
+)
+```
+
+```{r}
+levels(df_binary$Region)
+levels(df_binary$Season)
+```
+
+```{r}
+m_binary_sem2 <- glm(
+  log_DIN_lag_over_rt ~
+    Season +
+    Region +
+    Region*log_SAC_lag +
+    Region*log_SJR_lag +
+    Region*log_EXPORTS_lag,
+  data = df_binary
+)
+
+summary(m_binary_sem2)
+
+V_sum_sem2 <- vcovCL(
+  m_binary_sem2,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem2,
+  vcov. = V_sum_sem2
+)
+```
+
+```{r}
+summary(
+  emtrends(
+    m_binary_sem2,
+    ~ Region,
+    var = 'log_SAC_lag',
+    vcov. = V_sum_sem2
+  ),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emtrends(
+    m_binary_sem2,
+    ~ Region,
+    var = 'log_SJR_lag',
+    vcov. = V_sum_sem2
+  ),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emtrends(
+    m_binary_sem2,
+    ~ Region,
+    var = 'log_EXPORTS_lag',
+    vcov. = V_sum_sem2
+  ),
+  infer = c(TRUE, TRUE)
+)
+```
+
+```{r}
+m_binary_sem3 <- glm(log_SAC_lag ~ Season, data = df_binary)
+
+m_binary_sem4 <- glm(log_SJR_lag ~ Season, data = df_binary)
+
+m_binary_sem5 <- glm(log_EXPORTS_lag ~ Season, data = df_binary)
+
+V_sum_sem3 <- vcovCL(
+  m_binary_sem3,
+  cluster = ~ Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem3,
+  vcov. = V_sum_sem3
+)
+
+V_sum_sem4 <- vcovCL(
+  m_binary_sem4,
+  cluster = ~ Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem4,
+  vcov. = V_sum_sem4
+)
+
+V_sum_sem5 <- vcovCL(
+  m_binary_sem5,
+  cluster = ~ Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem5,
+  vcov. = V_sum_sem5
+)
+```
+
+```{r}
+summary(
+  emmeans(m_binary_sem3, ~ Season, vcov. = V_sum_sem3),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emmeans(m_binary_sem4, ~ Season, vcov. = V_sum_sem4),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emmeans(m_binary_sem5, ~ Season, vcov. = V_sum_sem5),
+  infer = c(TRUE, TRUE)
+)
+```
+
+```{r}
+m_binary_sem6 <- glm(
+  log_DissOrthophos_lag_over_rt ~
+    Season +
+    Region +
+    Region*log_SAC_lag +
+    Region*log_SJR_lag +
+    Region*log_EXPORTS_lag,
+  data = df_binary
+)
+
+summary(m_binary_sem6)
+
+V_sum_sem6 <- vcovCL(
+  m_binary_sem6,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_binary_sem6,
+  vcov. = V_sum_sem6
+)
+```
+
+```{r}
+summary(
+  emtrends(
+    m_binary_sem6,
+    ~ Region,
+    var = 'log_SAC_lag',
+    vcov. = V_sum_sem6
+  ),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emtrends(
+    m_binary_sem6,
+    ~ Region,
+    var = 'log_SJR_lag',
+    vcov. = V_sum_sem6
+  ),
+  infer = c(TRUE, TRUE)
+)
+
+summary(
+  emtrends(
+    m_binary_sem6,
+    ~ Region,
+    var = 'log_EXPORTS_lag',
+    vcov. = V_sum_sem6
+  ),
+  infer = c(TRUE, TRUE)
+)
+```
+
+## SEM Itself
+
+```{r}
+# variables used anywhere in either model
+sem_vars <- unique(c(
+  all.vars(formula(m_binary_sem1)),
+  all.vars(formula(m_binary_sem2)),
+  all.vars(formula(m_binary_sem3)),
+  all.vars(formula(m_binary_sem4)),
+  all.vars(formula(m_binary_sem5)),
+  all.vars(formula(m_binary_sem6))
+))
+
+df_sem <- df_binary %>%
+  select(all_of(sem_vars)) %>%
+  drop_na() %>%
+  droplevels()
+
+# refit both models on identical rows
+m_sem_1 <- update(m_binary_sem1, data = df_sem)
+
+m_sem_2 <- update(m_binary_sem2, data = df_sem)
+
+m_sem_3 <- update(m_binary_sem3, data = df_sem)
+
+m_sem_4 <- update(m_binary_sem4, data = df_sem)
+
+m_sem_5 <- update(m_binary_sem5, data = df_sem)
+
+m_sem_6 <- update(m_binary_sem6, data = df_sem)
+
+# pSEM
+library(piecewiseSEM)
+
+sem_wb <- psem(
+  m_sem_1,
+  m_sem_2,
+  m_sem_3,
+  m_sem_4,
+  m_sem_5,
+  m_sem_6
+)
+
+summary(sem_wb, standardize = 'none')
+```

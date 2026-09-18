@@ -1,0 +1,202 @@
+
+Transformations for data
+
+```{r}
+library(tidyverse)
+
+load(here::here('Short Term Analysis/st_data/04_imputedata.Rda'))
+
+# remove un-needed analytes
+df_mvi <- df_mvi %>%
+  dplyr::select(!c(contains('AbsCellDensity'),'TotPhos'))
+
+# rename the monreg variables (otherwise they'll get long)
+
+df_mvi <- df_mvi %>%
+  rename(
+    graze_rate = monreg_graze_rate,
+    clam_biomass = monreg_biomass,
+    filt_rate = monreg_filt_rate
+  )
+```
+
+# derive analytes
+
+```{r}
+# create derived analytes
+df_mvi <- df_mvi %>%
+  mutate(DIN = DissAmmonia + DissNitrateNitrite,
+         TDN = DON + DissAmmonia + DissNitrateNitrite,
+         frac_NH4 = if_else(DIN > 0, DissAmmonia / DIN, NA_real_),
+         frac_NN = if_else(DIN > 0, DissNitrateNitrite / DIN, NA_real_),
+         frac_NH4_TDN = if_else(TDN > 0, DissAmmonia / TDN, NA_real_),
+         frac_DIN = if_else(TDN > 0, DIN / TDN, NA_real_),
+         frac_DON = if_else(TDN > 0, DON / TDN, NA_real_))
+
+# create Region x Year x Month clustering unit
+df_mvi <- df_mvi %>%
+  mutate(
+  region_time = interaction(
+    Region, Year, Month,
+    drop = TRUE
+  ))
+```
+
+# factor/re-level relevant analytes
+
+```{r}
+df_mvi$Season <- factor(df_mvi$Season,
+                        levels = c('Winter', 'Spring', 'Summer', 'Autumn'))
+
+df_mvi$Region <- factor(df_mvi$Region)
+
+df_mvi <- df_mvi %>%
+  mutate(mvi_class = relevel(factor(mvi_class), ref = 'HAB'))
+```
+
+# log variables
+
+```{r}
+log_vars <- c(
+  'Chlorophyll',
+  'Pheophytin',
+  'Conductivity',
+  'Turbidity',
+  'DissSilica',
+  'DissAmmonia',
+  'DissNitrateNitrite',
+  'DIN',
+  'DON',
+  'TDN',
+  'DissOrthophos',
+  'TKN',
+  'DissChloride',
+  'TDS',
+  'SAC',
+  'SJR',
+  'OUT',
+  'EXPORTS',
+  'clam_biomass',
+  'graze_rate',
+  'filt_rate'
+)
+
+df_mvi <- df_mvi %>%
+  mutate(
+    across(
+      all_of(log_vars),
+      log,
+      .names = 'log_{.col}'
+    )
+  ) %>%
+  dplyr::select(-all_of(log_vars))
+```
+
+# z-score (center & scale)
+
+```{r}
+# exclude rel cel density for now
+# am including the fractional variables
+df_mvi <- df_mvi %>%
+  mutate(
+    across(
+      where(is.numeric) &
+        !any_of(c(
+          'Year', 'Month', 'Station', 'Survey', 'Season',
+          'Region', 'mvi_class', 'modeled_class', 'region_time'
+        )) &
+        !contains('RelCellDensity'),
+      ~ as.numeric(scale(.x, center = TRUE, scale = TRUE))
+    )
+  )
+```
+
+# lag data
+
+Based on what variables I know will be used
+
+```{r}
+lag_vars_1mo <- c(
+  'log_DissAmmonia', 'log_DissNitrateNitrite', 'log_DIN', 'log_DON',
+  'log_TDN', 'frac_NH4', 'frac_DON', 'frac_DIN', 'frac_NH4_TDN',
+  'log_DissSilica', 'log_DissOrthophos', 'log_Turbidity',
+  'log_graze_rate', 'Temperature', 'log_Conductivity'
+)
+
+lag_vars_3mo <- c('log_SJR', 'log_SAC', 'log_EXPORTS', 'log_OUT')
+
+df_lag <- df_mvi %>%
+  mutate(
+    Year_num = as.numeric(as.character(Year)),
+    Month_num = as.numeric(as.character(Month)),
+    tindex = Year_num * 12 + Month_num
+  ) %>%
+  arrange(Station, tindex) %>%
+  group_by(Station) %>%
+  mutate(
+    gap1 = tindex - dplyr::lag(tindex, 1),
+    gap3 = tindex - dplyr::lag(tindex, 3),
+    across(
+      all_of(lag_vars_1mo),
+      ~ if_else(gap1 == 1, dplyr::lag(.x, 1), NA_real_),
+      .names = '{.col}_lag'
+    ),
+    across(
+      all_of(lag_vars_3mo),
+      ~ if_else(gap3 == 3, dplyr::lag(.x, 3), NA_real_),
+      .names = '{.col}_lag3'
+    ),
+    class_lag = if_else(
+      gap1 == 1,
+      as.character(dplyr::lag(mvi_class, 1)),
+      NA_character_
+    )
+  ) %>%
+  ungroup() %>%
+  mutate(
+    class_lag = factor(class_lag, levels = levels(df_mvi$mvi_class)),
+    Year_c = Year_num - median(unique(Year_num)),
+    hab_bin = as.integer(mvi_class == 'HAB'),
+    bab_bin = as.integer(mvi_class == 'BAB'),
+    mvi_num = as.integer(
+      factor(mvi_class, levels = c('HAB', 'No bloom', 'BAB'))
+    ) - 1
+  )
+```
+
+```{r}
+check3mo <- df_lag %>%
+  group_by(Station) %>%
+  arrange(tindex, .by_group = TRUE) %>%
+  mutate(
+    Month_lag3  = dplyr::lag(Month, 3),
+    Season_lag3 = dplyr::lag(Season, 3)
+  ) %>%
+  ungroup() %>%
+  filter(gap3 == 3)
+
+check3mo %>%
+  summarize(
+    n = n(),
+    same_month  = sum(Month == Month_lag3, na.rm = TRUE),
+    same_season = sum(Season == Season_lag3, na.rm = TRUE)
+  )
+```
+
+# Export
+
+```{r}
+df_lag <- df_lag %>%
+  select(-c(gap1, gap3))
+
+df_mvi <- df_lag
+
+# FOR NOW, NO CLAMS
+
+df_mvi <- df_mvi %>%
+  select(-c(log_graze_rate, log_graze_rate_lag))
+```
+
+```{r}
+save(df_mvi, file = here::here('Short Term Analysis/st_data/05_transforms.Rda'))
+```

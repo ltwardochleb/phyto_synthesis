@@ -7,11 +7,13 @@ library(lubridate)
 library(compositions)
 ```
 
-Using base dataset (integrated_dataset_2008-2022.Rdata)
+Using base dataset (integrated_dataset_2008-2022_imp.Rdata)
+
+NOTE: < RL nutrient values were imputed using a uniform distribution between close-to-zero and the RL. One data set was chosen to move forward with. Sensitivity analyses were done to confirm this would not have a large effect on results.
 
 ```{r}
 # load data
-load(here::here('Data/integrated_dataset_2008-2024.Rdata'))
+load(here::here('Data/integrated_dataset_2008-2024_imp.Rdata'))
 
 # remove entirely duplicated rows
 dat <- distinct(dat)
@@ -28,11 +30,9 @@ dat <- dat %>%
 dat <- dat %>%
   filter(!(Station %in% c('LSZ2','LSZ6','LSZ2-SJR','LSZ6-SJR')))
 
-# use only Count Method == 'field'
+# use only Count Method == 'field' for EMP
 dat <- dat %>%
   filter(!(Survey %in% 'DWR-EMP' & CountMethodTaxa %in% c('transect','halfchamber')))
-
-df_test <- dat %>% select(Year, Month, Region, Station, SAC)
 ```
 
 # Basic Checks
@@ -730,7 +730,7 @@ df_full_export <- df_events %>%
 
 ## Check Rows
 
-Row total should equal the number of events (2098).
+Row total should equal the number of events (1937).
 
 ```{r}
 event_cols <- c('Station', 'Date', 'Lab')

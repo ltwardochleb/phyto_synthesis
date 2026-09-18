@@ -1,0 +1,908 @@
+# Read in Data
+
+```{r}
+library(tidyverse)
+library(here)
+library(nnet)
+library(mgcv)
+library(car)
+library(DHARMa)
+library(corrplot)
+library(sandwich)
+library(lmerTest)
+library(lme4)
+library(nnet)
+
+load(here::here('Short Term Analysis/st_data/05_transforms.Rda'))
+```
+
+```{r}
+# custom functions for later (flatten the cluster covariance matrices)
+coef.multinom_flat <- function(object, ...) {
+  B <- NextMethod()
+  v <- as.vector(t(B))
+  names(v) <- paste(rep(rownames(B), each = ncol(B)),
+                    rep(colnames(B), times = nrow(B)), sep = ':')
+  v
+}
+
+vcov.multinom_flat <- function(object, ...) attr(object, 'V_cl')
+```
+
+```{r}
+build_variance_components <- function(df, station_vars){#, region_time_vars) {
+
+  # WITHIN RT (region-month-year)
+  df <- df %>%
+    group_by(Region, region_time) %>%
+    mutate(
+      across(
+        all_of(station_vars),
+        list(
+          rt_mean = ~ mean(.x, na.rm = TRUE),   # region-time mean (Xbar_rt)
+          within_rt = ~ .x - mean(.x, na.rm = TRUE) # dev per station (d_srt)
+        ),
+        .names = '{.col}_{.fn}'
+      )
+    ) %>%
+    ungroup()
+
+  # BETWEEN REGION (regional mean)
+  rt_mean_vars <- paste0(station_vars, '_rt_mean')
+
+  region_means <- df %>%
+    distinct(
+      Region,
+      region_time,
+      across(all_of(rt_mean_vars))
+    ) %>%
+    group_by(Region) %>%
+    summarize(
+      across(
+        all_of(rt_mean_vars),
+        ~ mean(.x, na.rm = TRUE),  # regional mean (Xbar_r)
+        .names = '{.col}_bw_region'
+      ),
+      .groups = 'drop'
+    ) %>%
+    rename_with(
+      ~ sub('_rt_mean_bw_region$', '_bw_region', .x)
+    )
+
+  df <- df %>%
+    left_join(region_means, by = 'Region')
+
+  # OVER RT (d_rt = Xbar_rt - Xbar_r)
+  for (v in station_vars) {
+    df[[paste0(v, '_over_rt')]] <-
+      df[[paste0(v, '_rt_mean')]] -
+      df[[paste0(v, '_bw_region')]]
+  }
+
+  # REGION-TIME VARS (already at rt level; no within-rt, has over_rt/bw_region)
+  # region_time_bw <- df %>%
+  #   distinct(Region, region_time, across(all_of(region_time_vars))) %>%
+  #   group_by(Region) %>%
+  #   summarize(
+  #     across(
+  #       all_of(region_time_vars),
+  #       ~ mean(.x, na.rm = TRUE),
+  #       .names = '{.col}_bw_region'
+  #     ),
+  #     .groups = 'drop'
+  #   )
+  # 
+  # df <- df %>%
+  #   left_join(region_time_bw, by = 'Region')
+  # 
+  # for (v in region_time_vars) {
+  #   df[[paste0(v, '_over_rt')]] <-
+  #     df[[v]] - df[[paste0(v, '_bw_region')]]
+  # }
+
+  df
+}
+```
+
+# Bloom vs No Bloom
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag',
+  'log_SJR_lag',
+  'log_EXPORTS_lag',
+  'log_OUT_lag'
+)
+
+# DATA
+
+# No Bloom: 0; Bloom (HAB/BAB): 1
+df_bloom <- df_mvi %>%
+  mutate(
+    Bloom = as.integer(mvi_class %in% c('HAB', 'BAB'))
+  )
+
+df_wsjr <- build_variance_components(df_bloom, station_vars)#, region_time_vars)
+```
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsjr) %>%
+  dplyr::bind_rows()
+
+# variance_check <- lapply(c(station_vars, region_time_vars), calc_variance_decomp, df = df_wsjr) %>%
+#   dplyr::bind_rows()
+
+variance_check
+```
+
+```{r}
+m_bloom_af <- glm(
+  Bloom ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_wsjr,
+  family = binomial
+)
+
+summary(m_bloom_af)
+```
+
+```{r}
+V_rt_date <- vcovCL(
+  m_bloom_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_af,
+  vcov. = V_rt_date
+)
+```
+
+```{r}
+vif_df <- data.frame(
+  variable = names(vif(m_bloom_af)),
+  VIF = as.numeric(vif(m_bloom_af))
+) %>%
+  arrange(desc(VIF)) %>%
+  mutate(VIF = round(VIF, 2))
+
+vif_df
+```
+
+```{r}
+flow_vars <- c('log_SAC', 'log_SJR', 'log_EXPORTS',
+               'log_SAC_lag3', 'log_SJR_lag3', 'log_EXPORTS_lag3')
+
+df_mvi %>%
+  dplyr::select(dplyr::all_of(flow_vars)) %>%
+  stats::cor(use = 'pairwise.complete.obs') %>%
+  corrplot(method = 'color', type = 'upper', addCoef.col = 'black',
+           number.cex = 0.7, tl.col = 'black', tl.srt = 45,
+           diag = FALSE, order = 'hclust')
+```
+
+```{r}
+m_bloom_ndoi <- glm(
+  Bloom ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+    
+    #log_graze_rate_over_rt,
+  
+  data = df_wsjr,
+  family = binomial
+)
+
+summary(m_bloom_ndoi)
+```
+```{r}
+V_rt_date <- vcovCL(
+  m_bloom_ndoi,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_ndoi,
+  vcov. = V_rt_date
+)
+```
+
+```{r}
+vif_df <- data.frame(
+  variable = names(vif(m_bloom_ndoi)),
+  VIF = as.numeric(vif(m_bloom_ndoi))
+) %>%
+  arrange(desc(VIF)) %>%
+  mutate(VIF = round(VIF, 2))
+
+vif_df
+
+unique(df_wsjr$Region)
+```
+
+```{r}
+df_nosjr <- df_bloom %>%
+  filter(Region != 'Suisun Bay')
+
+df_nosjr <- build_variance_components(df_nosjr, station_vars)
+
+m_bloom_ndoi <- glm(
+  Bloom ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_nosjr,
+  family = binomial
+)
+
+summary(m_bloom_ndoi)
+
+V_rt_date <- vcovCL(
+  m_bloom_ndoi,
+  cluster = ~ region_time,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_ndoi,
+  vcov. = V_rt_date
+)
+```
+```{r}
+m_bloom_af <- glm(
+  Bloom ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    # log_SAC:Region + log_SJR:Region + log_EXPORTS:Region +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    # log_SAC_lag3:Region + log_SJR_lag3:Region + log_EXPORTS_lag3:Region +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_nosjr,
+  family = binomial
+)
+
+summary(m_bloom_af)
+
+V_rt_date <- vcovCL(
+  m_bloom_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_af,
+  vcov. = V_rt_date
+)
+```
+
+# HAB vs BAB
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag',
+  'log_SJR_lag',
+  'log_EXPORTS_lag',
+  'log_OUT_lag'
+)
+
+# DATA
+
+# BAB: 0; HAB: 1
+df_hbab <- df_mvi %>%
+  filter(mvi_class != 'No bloom') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  )
+
+df_wsjr <- build_variance_components(df_hbab, station_vars)#, region_time_vars)
+```
+
+```{r}
+df_hbab %>%
+  count(HAB)
+
+df_hbab %>%
+  count(mvi_class)
+
+df_hbab %>%
+  count(Region, mvi_class) %>%
+  pivot_wider(names_from = mvi_class, values_from = n, values_fill = 0)
+```
+Region difference with SB; far less HABs
+
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsjr) %>%
+  dplyr::bind_rows()
+
+# variance_check <- lapply(c(station_vars, region_time_vars), calc_variance_decomp, df = df_wsjr) %>%
+#   dplyr::bind_rows()
+
+variance_check
+```
+
+```{r}
+m_bloom_af <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_wsjr,
+  family = binomial
+)
+
+summary(m_bloom_af)
+```
+
+```{r}
+V_rt_date <- vcovCL(
+  m_bloom_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_af,
+  vcov. = V_rt_date
+)
+```
+
+```{r}
+vif_df <- data.frame(
+  variable = names(vif(m_bloom_af)),
+  VIF = as.numeric(vif(m_bloom_af))
+) %>%
+  arrange(desc(VIF)) %>%
+  mutate(VIF = round(VIF, 2))
+
+vif_df
+```
+
+```{r}
+m_bloom_ndoi <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+        
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+    
+    #log_graze_rate_over_rt,
+  
+  data = df_wsjr,
+  family = binomial
+)
+
+summary(m_bloom_ndoi)
+```
+
+```{r}
+V_rt_date <- vcovCL(
+  m_bloom_ndoi,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_ndoi,
+  vcov. = V_rt_date
+)
+```
+
+```{r}
+vif_df <- data.frame(
+  variable = names(vif(m_bloom_ndoi)),
+  VIF = as.numeric(vif(m_bloom_ndoi))
+) %>%
+  arrange(desc(VIF)) %>%
+  mutate(VIF = round(VIF, 2))
+
+vif_df
+
+unique(df_wsjr$Region)
+```
+
+```{r}
+df_nosjr <- df_hbab %>%
+  filter(Region != 'Suisun Bay')
+
+df_nosjr <- build_variance_components(df_nosjr, station_vars)
+
+m_bloom_ndoi <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+        
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_nosjr,
+  family = binomial
+)
+
+summary(m_bloom_ndoi)
+
+V_rt_date <- vcovCL(
+  m_bloom_ndoi,
+  cluster = ~ region_time,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_ndoi,
+  vcov. = V_rt_date
+)
+```
+(REs collapse)
+
+
+
+```{r}
+m_bloom_af <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC*Region + log_SJR*Region + log_EXPORTS*Region +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+  
+    # log_SAC_lag3:Region + log_SJR_lag3:Region + log_EXPORTS_lag3:Region +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_nosjr,
+  family = binomial
+)
+
+summary(m_bloom_af)
+
+V_rt_date <- vcovCL(
+  m_bloom_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bloom_af,
+  vcov. = V_rt_date
+)
+```
+
+
+```{r}
+df_lag <- build_variance_components(df_mvi, station_vars)
+
+df_lag <- df_lag %>%
+  mutate(
+    Region = relevel(Region, ref = 'Suisun Bay'),
+    mvi_class = relevel(mvi_class, ref = 'No bloom')
+    )
+
+m_mn <- mclogit::mblogit(
+  mvi_class ~
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    log_SAC + log_SJR + log_EXPORTS +
+    # log_SAC:Region + log_SJR:Region + log_EXPORTS:Region +
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    Region,
+  data = df_lag
+  #random = list(~1 | region_time, ~1 | Date), # REs collapse
+  # control = mclogit::mmclogit.control(
+  #   inner.optimizer = 'BFGS',
+  #   maxit.inner = 500
+  # )
+)
+
+summary(m_mn)
+```
+```{r}
+vif(m_mn)
+```
+
+```{r}
+library(nnet)
+
+m_mn <- nnet::multinom(
+  mvi_class ~
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    log_SAC + log_SJR + log_EXPORTS +
+    log_SAC:Region + log_SJR:Region + log_EXPORTS:Region +
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt +
+    Region,
+  data = df_lag,
+  trace = FALSE
+)
+
+summary(m_mn)
+```
+```{r}
+library(lmtest)
+
+V <- vcovCL(m_mn, cluster = ~ region_time + Date, cadjust = TRUE)
+
+cf_mat <- coef(m_mn)
+
+cf_flat <- setNames(
+  as.vector(t(cf_mat)),
+  paste(rep(rownames(cf_mat), each = ncol(cf_mat)), colnames(cf_mat), sep = ':')
+)
+
+all(names(cf_flat) %in% colnames(V))   # confirm this is TRUE before trusting anything below
+
+cf_flat <- cf_flat[colnames(V)]
+
+se <- sqrt(diag(V))
+z  <- cf_flat / se
+p  <- 2 * pnorm(-abs(z))
+
+results <- data.frame(term = names(cf_flat), estimate = cf_flat, robust_se = se, z = z, p = p, row.names = NULL)
+results
+```
+```{r}
+hab_names <- grep('^HAB:', names(cf_flat), value = TRUE)
+vars      <- sub('^HAB:', '', hab_names)
+bab_names <- paste0('BAB:', vars)
+
+diff <- cf_flat[hab_names] - cf_flat[bab_names]
+
+var_diff <- diag(V[hab_names, hab_names]) +
+  diag(V[bab_names, bab_names]) -
+  2 * diag(V[hab_names, bab_names])
+
+se_diff <- sqrt(var_diff)
+z <- diff / se_diff
+p <- 2 * pnorm(-abs(z))
+
+hab_vs_bab <- data.frame(term = vars, estimate = diff, se = se_diff, z = z, p = p, row.names = NULL)
+hab_vs_bab
+```
+
+# BAB vs No Bloom
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag',
+  'log_SJR_lag',
+  'log_EXPORTS_lag',
+  'log_OUT_lag'
+)
+
+# DATA
+
+# No Bloom: 0; BAB: 1
+df_hbab <- df_mvi %>%
+  filter(mvi_class != 'HAB') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'BAB')
+  )
+
+df_wsjr <- build_variance_components(df_bloom, station_vars)#, region_time_vars)
+```
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsjr) %>%
+  dplyr::bind_rows()
+
+# variance_check <- lapply(c(station_vars, region_time_vars), calc_variance_decomp, df = df_wsjr) %>%
+#   dplyr::bind_rows()
+
+variance_check
+```
+
+```{r}
+m_bloom_af <- glm(
+  Bloom ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_wsjr,
+  family = binomial
+)
+
+summary(m_bloom_af)
+```
+```
+

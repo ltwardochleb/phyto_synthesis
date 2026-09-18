@@ -26,7 +26,7 @@ wq_sub <- wq %>%
   semi_join(
     df_cells %>%
       distinct(Station, Date),
-    by = c("Station", "Date")
+    by = c('Station', 'Date')
   )
 
 wq_sub <- wq_sub %>%
@@ -153,7 +153,7 @@ df_phyto_meta %>%
 
 ```{r}
 df_phyto_meta %>%
-  count(Bloom_Class, Group) %>%
+  count(mvi_class, Group) %>%
   pivot_wider(
     names_from = Group,
     values_from = n,
@@ -181,6 +181,16 @@ df_phyto_meta %>%
   )
 ```
 
+```{r}
+df_phyto_meta %>%
+  filter(
+    Year >= 2015,
+    is.na(mvi_class)
+  ) %>%
+  count(Station, name = 'n')
+```
+
+
 # Check Ptox
 
 ## MVI:Ptox:Chla
@@ -197,8 +207,8 @@ df_phyto_meta %>%
   filter(!is.na(YearGroup)) %>%
   group_by(MVI_Ptox_Chla, Group) %>%
   summarise(
-    num_HAB = sum(pred_class == 'HAB', na.rm = TRUE),
-    num_total = sum(pred_class %in% c('HAB', 'BAB'), na.rm = TRUE),
+    num_HAB = sum(modeled_class == 'HAB', na.rm = TRUE),
+    num_total = sum(modeled_class %in% c('HAB', 'BAB'), na.rm = TRUE),
     pct_HAB = round(100 * num_HAB / num_total, 2),
     pct_num = sprintf('%.1f%% (%d)', pct_HAB, num_HAB),
     .groups = 'drop'
@@ -213,12 +223,12 @@ df_phyto_meta %>%
 
 ## "Confusion Matrix"
 
-How often does MVI vs modeling (pred_class) disagree? What role does ptox play when they do?
+How often does MVI vs modeling (modeled_class) disagree? What role does ptox play when they do?
 
 ```{r}
 df_phyto_meta %>%
   filter(MVI_bin %in% c(0, 1)) %>%
-  mutate(pred_ptox = paste(pred_class, Ptox, sep = ' : ')) %>%
+  mutate(pred_ptox = paste(modeled_class, Ptox, sep = ' : ')) %>%
   count(MVI_bin, pred_ptox) %>%
   pivot_wider(
     names_from = pred_ptox,
@@ -232,9 +242,9 @@ df_phyto_meta %>%
   filter(MVI_bin %in% c(0, 1)) %>%
   mutate(
     pred_class2 = case_when(
-      pred_class %in% c("BAB", "NA") ~ "NotHAB",
-      is.na(pred_class) ~ "NotHAB",
-      TRUE ~ pred_class
+      modeled_class %in% c("BAB", "NA") ~ "NotHAB",
+      is.na(modeled_class) ~ "NotHAB",
+      TRUE ~ modeled_class
     ),
     pred_ptox = paste(pred_class2, Ptox, sep = " : ")
   ) %>%
