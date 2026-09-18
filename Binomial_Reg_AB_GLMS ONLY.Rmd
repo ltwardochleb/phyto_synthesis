@@ -31,6 +31,7 @@ library(lme4)
 
 conflicted::conflict_prefer("select","dplyr")
 conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflicts_prefer(dplyr::lag)
 options(scipen = 999)
 ```
 
@@ -39,13 +40,14 @@ options(scipen = 999)
 ```{r}
 
 # variables to include:
-c = c("Chlorophyll", "Regions", "Date","Year", "Month",  "season","SAC","lagSAC",
-       "EXPORT","logEXPORT","OUT","lagOUT", "DissAmmonia",
-       "lagDissAmmonia", "TotPhos","lagTotPhos","DissNitrateNitrite", 
-       "lagDissNitrateNitrite","Temperature","lagTemperature","Secchi", 
-       "lagSecchi","Conductivity","lagConductivity","season_num", "DissOrthophos", "lagDissOrthophos", "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
+c = c("Chlorophyll", "Regions", "Date","Year", "Month",  "season","SAC",
+       "EXPORT","OUT", "DissAmmonia",
+       "lagDissAmmonia", "TotPhos","DissNitrateNitrite", 
+       "Temperature","Secchi", 
+       "Conductivity","season_num", "DissOrthophos", "clam_step",
+      "logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT","logEXPORT")#, "Biomass","Grazing_rate","Filtration_rate", "SJR","lagSJR", "Index","lagIndex")
 
-df <- read.csv("Data/regional_integrated_dataset3.csv" )
+df <- read.csv("Data/regional_integrated_dataset4.csv" )
 
 df$Date = as.Date(df$Date)
 
@@ -79,14 +81,39 @@ df$logEXPORT <- log(df$EXPORT)
 
 ```
 
+## Remove outliers based on z-score
+
+removing outliers based on z-score, assuming the log transformations of the targeted variables have a normal distribution.
+
+-3 - 3 is a commonly used range beyond which values are considered outliers.
+https://statsandr.com/blog/outliers-detection-in-r/#z-scores 
+
+
+```{r}
+
+clean_df_z <- df 
+
+clean_df_z$logDissAmmonia[abs(scale(clean_df_z$logDissAmmonia)) > 3.29] <- NA
+
+clean_df_z$logDissNitrateNitrite[abs(scale(clean_df_z$logDissNitrateNitrite)) > 3.29] <- NA
+
+clean_df_z$logDissOrthophos[abs(scale(clean_df_z$logDissOrthophos)) > 3.29] <- NA
+
+outliers_z <- anti_join(df, clean_df_z)
+
+print(paste("rows changed:",nrow(outliers_z)))
+
+df <- clean_df_z
+```
+
 ## Separate Dataset Regionally
 May need to separate by flow as well, check from Ryan
 
 ```{r}
 
-df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","lagOUT","logSAC","lagSAC")]
+df_flow <- df[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","logSAC")]
 
-df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT","lagOUT", "lagSAC"))]
+df_no_flow <- df[,!(names(df) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT"))]
 
 r <- unique(df_no_flow$Regions)
 region_list <- list()
@@ -98,7 +125,7 @@ for (region in r){
 
 ```
 
-## Impute
+## Impute data
 
 ```{r}
 regional_imp <- list()
@@ -127,44 +154,65 @@ for (region_imp in as.character(names(regional_imp))){
 
 ## Add Lag terms to imputed datasets
 
+```{r, include = FALSE}
+# # This code is taken from clamdata_cleanup_AB_261125.R
+# 
+# df_list_lag <- lapply(regional_imp_dfs, function(y) {
+# #Step 1: summarize by season 
+# wq_r_sum_lagseason <- y %>%
+#   group_by(Regions,Year,season) %>%
+#   summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+# 
+# #Step 2: Add a column for the following season.
+# #This seems counter-intuitive because the lag should be the prior season,
+# #but this is a merge column: it will merge back with the prior season
+# #in the original table. 
+# wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+#   select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+#   rename_with(~paste0("lag",.x)) %>%
+#   rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
+#   mutate(lagseason = case_when(
+#     season == "Spring" ~ "Summer",
+#     season == "Summer" ~ "Autumn",
+#     season == "Autumn" ~ "Winter",
+#     season == "Winter" ~ "Spring" 
+#   )) %>%
+#   mutate(lagseasonyear = case_when(
+#     season == "Autumn" ~ Year+1,
+#     !(season == "Autumn") ~ Year
+#   )) %>%
+#   mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+#   ungroup %>% 
+#   select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite,laglogConductivity,
+#          laglogSAC,laglogOUT, laglogDissOrthophos, laglogEXPORT)
+# 
+# 
+# y <- y %>% 
+#   mutate(seasonyear = paste0(season,year(Date))) %>%
+#   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+#   select(-seasonyear)%>%
+#   relocate(Date)
+# })
+```
+
 ```{r}
-# This code is taken from clamdata_cleanup_AB_261125.R
+#  Create the 3 month lag
+df_list_lag <- lapply(regional_imp_dfs, function(y){
 
-df_list_lag <- lapply(regional_imp_dfs, function(y) {
-#Step 1: summarize by season 
-wq_r_sum_lagseason <- y %>%
-  group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+  lagged_df <- y %>%
+    # Group by region so completion happens independently per region
+    group_by(Regions) %>%
+    
+    # Sort chronologically within each group
+    arrange(Regions, Date) %>%
+    
+    # Make sure all dates are present for lag variables later on.
+    complete(Date = seq(min(Date), max(Date), by = "1 month")) %>%
+    
+    # Lag all numeric columns by 3 rows
+    mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag{col}")) %>%
 
-#Step 2: Add a column for the following season.
-#This seems counter-intuitive because the lag should be the prior season,
-#but this is a merge column: it will merge back with the prior season
-#in the original table. 
-wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
-  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
-  rename_with(~paste0("lag",.x)) %>%
-  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
-  mutate(lagseason = case_when(
-    season == "Spring" ~ "Summer",
-    season == "Summer" ~ "Autumn",
-    season == "Autumn" ~ "Winter",
-    season == "Winter" ~ "Spring" 
-  )) %>%
-  mutate(lagseasonyear = case_when(
-    season == "Autumn" ~ Year+1,
-    !(season == "Autumn") ~ Year
-  )) %>%
-  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
-  ungroup %>% 
-  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite,laglogConductivity,
-         laglogSAC,laglogOUT, laglogDissOrthophos, laglogEXPORT)
-
-
-y <- y %>% 
-  mutate(seasonyear = paste0(season,year(Date))) %>%
-  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
-  select(-seasonyear)%>%
-  relocate(Date)
+    ungroup()
 })
 ```
 
@@ -394,25 +442,25 @@ testDispersion(bm3.po4.imp1.glm2)
 plot(simulateResiduals(bm3.po4.imp1.glm2))
 ```
 
-### bm3.po4.imp1.glm1 temperature
+### bm4.po4.imp1.glm1 temperature
 ```{r}
 testDispersion(bm4.po4.imp1.glm1)
 plot(simulateResiduals(bm4.po4.imp1.glm1))
 ```
 
-### bm3.po4.imp1.glm2 season
+### bm4.po4.imp1.glm2 season
 ```{r}
 testDispersion(bm4.po4.imp1.glm2)
 plot(simulateResiduals(bm4.po4.imp1.glm2))
 ```
 
-### bm3.po4.imp1.glm1 temperature
+### bm6.po4.imp1.glm1 temperature
 ```{r}
 testDispersion(bm6.po4.imp1.glm1)
 plot(simulateResiduals(bm6.po4.imp1.glm1))
 ```
 
-### bm3.po4.imp1.glm2 season
+### bm6.po4.imp1.glm2 season
 ```{r}
 testDispersion(bm6.po4.imp1.glm2)
 plot(simulateResiduals(bm6.po4.imp1.glm2))
@@ -519,14 +567,25 @@ x = std*z + m
 
 ```
 
+## Find median of the factors
+```{r}
+median_index_s <- median(as.integer(df1$season))
+levels(df1$season)[median_index_s]
+
+median_index_c <- median(as.integer(df1$clam_step))
+levels(df1$clam_step)[median_index_c] 
+```
+
+
 ## Function for LD Plots
 Creates the LD curves for each parameter and model
 ```{r}
 
-ldcurve <- function(model_name,param) {
+ldcurve <- function(model_name,param,xlab_name="parameter label") {
   
-  # model_name <- bm3.po4.imp1.glm1
-  # param <- "laglogDissNitrateNitrite"
+  # model_name <- bm4.po4.imp1.glm1
+  # param <- "laglogDissOrthophos"
+  # xlab_name <- "3-month Lag - DissOrthophos"
   
   #STEP 1: Create a dataframe that holds all parameters but one constant at their median.
   
@@ -534,12 +593,10 @@ ldcurve <- function(model_name,param) {
   df_pred <- data.frame(
     parameter = seq(min(df1[[param]],na.rm=T), max(df1[[param]],na.rm=T), length.out = 1000),
     clam_step = as.factor("post clam"),
-    season = as.factor("Summer"),
-    Regions = as.factor("Suisun Bay")) %>%
+    season = as.factor("Spring")) %>%
     rename(!!param := parameter)
   
   #Expand all the factors so that they reflect the same factors in the original dataset. 
-  df_pred$Regions = fct_expand(df_pred$Regions,c("Central","Confluence","North Delta", "South", "Suisun Bay"))
   df_pred$season = fct_expand(df_pred$season,c("Autumn","Spring","Summer","Winter"))
   df_pred$clam_step = fct_expand(df_pred$clam_step,c("post clam","pre clam"))
   
@@ -549,20 +606,26 @@ ldcurve <- function(model_name,param) {
 
   #Find the median of all the non-selected parameters in the the z-scored dataframe.
   df_mean <- df1 %>%
-    select(-clam_step,-c(all_of(param))) %>%
+    select(-clam_step,-Regions,-Chlorophyll,-Date,-Year,-Month,-season,-bloom_thr,-bloom,-c(all_of(param))) %>%
     group_by() %>%
-    summarize(across(DissAmmonia:laglogEXPORT, ~ median(.x, na.rm = TRUE))) 
+    summarize_all(~ median(.x, na.rm = TRUE)) 
 
   #bind the sequenced dataframe and the median dataframe. 
   df_pred <- bind_cols(df_pred,df_mean) %>%
-    select(colnames(model_params))
+    select(colnames(model_params)) #selects only parameters in the model 
   
   #STEP 2: Predict blooms based on the datframe you created.
-  df_pred$predicted <- predict(model_name, newdata = df_pred, type = "response")
+  df_pred <- as.data.frame(predict(model_name, newdata = df_pred, type = "link",se.fit=T)) %>%
+    select(1,2) %>%
+    mutate(fit_prob=plogis(fit),
+           hi = plogis(fit+1.96*se.fit), #upper 95% CI
+           lo = plogis(fit-1.96*se.fit)  #lower 95% CI
+           ) %>%  
+    bind_cols(df_pred)
 
   #summarize the statistics of the natural (pre-z-scored) dataframe. 
   df1_stats <- df1_nat %>%
-    select(Date,DissAmmonia:laglogEXPORT,-clam_step,-season_num) %>%
+    select(Date,DissAmmonia:laglogSAC,-clam_step,-season_num) %>%
     pivot_longer(cols = !"Date",names_to = "Parameter") %>%
     group_by(Parameter) %>%
     summarize(mean = mean(value,na.rm=T),sd = sd(value,na.rm=T))
@@ -575,7 +638,18 @@ ldcurve <- function(model_name,param) {
   rename(!!paste0(param,"_nat") := paramnat)
 
   #Plot the LD curve
-  plot(df_pred[[paste0(param,"_nat")]],df_pred$predicted,ylab="LD as decimal", xlab= param)
+  plot(df_pred[[paste0(param,"_nat")]],df_pred$fit,ylab="Probability of Phytoplankton Bloom", xlab= xlab_name,type='n',
+       ylim = c(0,max(df_pred$hi)))
+  #polygon
+  polygon(c(rev(df_pred[[paste0(param,"_nat")]]),df_pred[[paste0(param,"_nat")]]),c(rev(df_pred$hi),df_pred$lo),
+          col='grey80',border=NA)
+  #add LD line
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$fit_prob)
+  #add high interval
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$hi,lty='dashed',col='red')
+  #add low interval
+  lines(df_pred[[paste0(param,"_nat")]],df_pred$lo,lty='dashed',col='red')
+  abline(h = 0.05,lty='dashed')
 }
 
 # ldcurve(bm3.po4.imp1.glm,"laglogDissNitrateNitrite")
@@ -583,7 +657,7 @@ ldcurve <- function(model_name,param) {
 ```
 
 
-## Function for LD10 Values across all parameters
+## Function for LD Values across all parameters
 
 ```{r}
 findLD <- function(model_name,ld_val = 10) {
@@ -601,13 +675,10 @@ for(i in colnames(ld10tab)) {
   df_pred2 <- data.frame(
     parameter = seq(min(df1[[i]],na.rm=T), max(df1[[i]],na.rm=T), length.out = 1000),
     clam_step = as.factor("post clam"),
-    season = as.factor("Summer"),
-    Regions = as.factor("Suisun Bay")) %>%
+    season = as.factor("Spring")) %>%
     rename(!!i := parameter)
   
   #expand factors
-  df_pred2$Regions = fct_expand(df_pred2$Regions,c("Central","Confluence","North Delta",
-                                                 "South", "Suisun Bay"))
   df_pred2$season = fct_expand(df_pred2$season,c("Autumn","Spring","Summer","Winter"))
   df_pred2$clam_step = fct_expand(df_pred2$clam_step,c("post clam","pre clam"))
   
@@ -615,7 +686,7 @@ for(i in colnames(ld10tab)) {
   df_mean <- df1 %>%
     group_by() %>%
     summarize_if(where(is.numeric), ~ median(.x, na.rm = TRUE)) %>%
-    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom)
+    select(c(colnames(ld10tab)),-c(all_of(i)),-bloom) #selects only parameters in the model 
   
   df_pred2 <- bind_cols(df_pred2,df_mean)
   
@@ -654,7 +725,7 @@ findLD(bm3.po4.imp1.glm1,10) %>%
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm3.po4.imp1.glm1,"laglogDissAmmonia")
+ldcurve(bm3.po4.imp1.glm1,"laglogDissAmmonia","Seasonal Lag - DissAmmonia")
 ```
 
 
@@ -781,16 +852,21 @@ ldcurve(bm3.po4.imp1.glm2,"logOUT")
 
 ### LD values (shown as natural)
 ```{r}
-findLD(bm4.po4.imp1.glm1,10) %>%
+ldmodel <- findLD(bm4.po4.imp1.glm1,10) %>%
   merge(findLD(bm4.po4.imp1.glm1,8),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,5),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,3),by="Parameters") %>%
   merge(findLD(bm4.po4.imp1.glm1,1),by="Parameters")
+ldmodel
+l5 <- ldmodel %>%
+  select(Parameters, LD_5)
+l5
+# openxlsx::write.xlsx(l5,"Figures/Binomial GAM/LD5_Table.xlsx")
 ```
 
 ### laglogDissAmmonia Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"laglogDissAmmonia")
+ldcurve(bm4.po4.imp1.glm1,"laglogDissAmmonia","Previous Season Average - Dissolved Ammonia (mg/L)")
 ```
 
 
@@ -808,7 +884,8 @@ ldcurve(bm4.po4.imp1.glm1,"laglogDissOrthophos")
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"laglogSAC")
+ldcurve(bm4.po4.imp1.glm1,"laglogSAC", "3 month prior Sacramento River Flow (CFS)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "laglogSAC"], lty='dashed')
 ```
 
 
@@ -838,13 +915,15 @@ ldcurve(bm4.po4.imp1.glm1,"logDissOrthophos")
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"logSAC")
+ldcurve(bm4.po4.imp1.glm1,"logSAC","Sacramento River Flow (CFS)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "logSAC"], lty='dashed')
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm4.po4.imp1.glm1,"Temperature")
+ldcurve(bm4.po4.imp1.glm1,"Temperature","Temperature (C)")
+abline(v= ldmodel$LD_5[ldmodel$Parameters %in% "Temperature"], lty='dashed')
 ```
 
 
@@ -952,7 +1031,7 @@ ldcurve(bm6.po4.imp1.glm1,"laglogDissOrthophos")
 
 ### laglogSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"laglogSAC")
+ldcurve(bm6.po4.imp1.glm1,"laglogSAC","Previous Season Average Sacramento River Flow (CFS)")
 ```
 
 
@@ -982,13 +1061,13 @@ ldcurve(bm6.po4.imp1.glm1,"logDissOrthophos")
 
 ### logSAC Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"logSAC")
+ldcurve(bm6.po4.imp1.glm1,"logSAC", "Sacramento River Flow (CFS)")
 ```
 
 
 ### Temperature Plot
 ```{r}
-ldcurve(bm6.po4.imp1.glm1,"Temperature")
+ldcurve(bm6.po4.imp1.glm1,"Temperature","Temperature (C)")
 ```
 
 

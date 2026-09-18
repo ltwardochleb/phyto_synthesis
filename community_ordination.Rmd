@@ -1,0 +1,1355 @@
+---
+title: "Phytoplankton Community Ordination Plots"
+author: "Schuyler Nardelli"
+date: "2026-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load data
+```{r, warning=FALSE, message=FALSE}
+
+# Clear environment and plots
+rm(list = ls()); graphics.off()
+
+# Load libraries
+library(tidyverse)
+library(vegan)
+library(RColorBrewer)
+library(plotly)
+library(sf)
+library(ggpubr)
+library(ggrepel)
+library(patchwork)
+
+# Load integrated phytoplankton + environmental dataset
+load("Data/integrated_dataset_2008-2024_imp.Rdata") 
+
+#Reload PESP dataset with Genus and AlgalGroup
+pesp <- read.csv("Data/PESP_enumeration.csv") %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Date, Time)
+
+sum_na <- function(x) ifelse(all(is.na(x)), NA_real_, sum(x, na.rm = TRUE))
+
+pesp1 <- pesp %>%
+  group_by(Survey,Date,Station,Latitude,Longitude,SampleMethod,SampleDepth,DepthType,Lab,
+           CountMethodSample,CountMethodTaxa,Magnification,AlgalGroup,Genus) %>%
+  summarize(Cells_per_mL = sum_na(Cells_per_mL),
+            Units_per_mL = sum_na(Units_per_mL),
+            Biovolume_per_mL = sum_na(Biovolume_per_mL))
+
+# Calculate relative abundance/biovolume for each sample
+tot <- pesp1 %>% group_by(Date,Station) %>% summarise(tot_cells = sum_na(Cells_per_mL),
+                                                      tot_units = sum_na(Units_per_mL),
+                                                      tot_bio = sum_na(Biovolume_per_mL))
+pesp1 <- pesp1 %>% left_join(tot,by=c("Date","Station"))
+pesp1$relative_cell_density <- (pesp1$Cells_per_mL/pesp1$tot_cells)*100;
+pesp1$relative_unit_density <- (pesp1$Units_per_mL/pesp1$tot_units)*100;
+pesp1$relative_biovolume <- (pesp1$Biovolume_per_mL/pesp1$tot_bio)*100;
+
+rm(sum_na,tot)
+
+# Merge PESP with discrete datasets
+# Merge wq and df
+x <- df[,c("Date","SAC","SJR","OUT","EXPORTS","Index")]
+wq_df <- left_join(wq, x, by = "Date")
+wq_df <- subset(wq_df, select = -c(Latitude, Longitude))
+
+# Merge with PESP data
+dat <- left_join(pesp1, wq_df, by = c("Survey","Date","Station"))
+
+rm(x,wq_df,wq_df)
+
+# Add Month, Year, and Season
+dat$Month <- month(dat$Date)
+dat$Year <- year(dat$Date)
+
+dat$Season<- NA
+I = which(dat$Month %in% c(7:9)); dat$Season[I]<-"Summer"
+I = which(dat$Month %in% c(10:12)); dat$Season[I]<-"Autumn"
+I = which(dat$Month %in% c(1:3)); dat$Season[I]<-"Winter"
+I = which(dat$Month %in% c(4:6)); dat$Season[I]<-"Spring"
+
+rm(I)
+
+# Add in Region
+points_df <- dat[,c("Station","Survey","Latitude","Longitude")]
+points_df <- unique(points_df)
+points_df <- points_df %>% filter(!is.na(Latitude))
+points_df$id <- 1:length(points_df$Survey)
+
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
+
+points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
+  st_drop_geometry() 
+
+stat <- left_join(points_sf,points_with_region,by=c("Station","Survey","id"))
+coord <- data.frame(st_coordinates(stat$geometry))
+stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
+stat <- stat %>% st_drop_geometry() %>% select(-"id")
+dat <- left_join(dat,stat,by=c("Station","Survey","Latitude","Longitude")) %>%
+  rename(Region = Regions)
+
+rm(stat,points_df,points_sf,points_with_region,Region)
+
+# Add monthly grazing rate
+# Add in region
+points_df <- clam[,c("station_name","Latitude","Longitude")]
+points_df <- unique(points_df)
+points_df <- points_df %>% filter(!is.na(Latitude))
+points_df$id <- 1:length(points_df$station_name)
+
+Region <- st_read('Data/Regions_shp/Rosies_Regions_edited.shp')
+
+points_sf = points_df %>% st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+points_with_region <- st_join(points_sf, Region, join = st_within) %>%  
+  st_drop_geometry() 
+
+stat <- left_join(points_sf,points_with_region,by=c("station_name"))
+coord <- data.frame(st_coordinates(stat$geometry))
+stat$Latitude <- coord$Y; stat$Longitude <- coord$X; rm(coord)
+stat <- stat %>% st_drop_geometry() 
+
+clam <- left_join(clam,stat,by=c("station_name","Latitude","Longitude"))
+
+rm(stat,points_df,points_sf,points_with_region,Region)
+
+monthly_clam <- clam %>%
+  filter(!is.na(Region)) %>%
+  group_by(Year,Month,Region) %>%
+  summarize(monthly_biomass = mean(Biomass,na.rm=TRUE),
+            monthly_grazing_rate = mean(Grazing_rate,na.rm=TRUE),
+            monthly_filtration_rate = mean(Filtration_rate,na.rm=TRUE)) 
+
+dat <- left_join(dat, monthly_clam, by = c("Year","Month","Region"))
+
+# Filter dataset
+dat1 <- dat %>% filter(Region %in% c("Central", "Confluence", "Suisun Bay") &   
+                        Date > "2007-12-31" &    
+                        Survey %in% c("DWR-EMP","USGS-BP"))   
+
+# Perry: rn, from "Datetime" to "VSS"
+dat1 <- dat1 %>% ungroup()%>% filter(!if_all(24:67, is.na)) # Screens out PESP samples without corresponding WQ data
+dat1 <- dat1 %>% arrange(Date)
+
+```
+
+## Flag "bloom" or "no bloom" for each sample using chl threshold
+Considered "bloom" if Chla is 1 standard deviation above the mean value for the entire time series
+```{r, warning=FALSE, message=FALSE}
+
+dat1$bloom <- NA
+
+# Suisun Bay
+test <- dat1 %>% filter(Region=="Suisun Bay") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Suisun Bay" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,x)
+
+p1<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Suisun Bay"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Suisun Bay" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Suisun Bay")
+
+# Confluence
+test <- dat1 %>% filter(Region=="Confluence") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Confluence" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+
+p2<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Confluence"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Confluence" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Confluence")
+
+# Central Delta
+test <- dat1 %>% filter(Region=="Central") %>% group_by(Date) %>% summarize(Chl=mean(Chlorophyll,na.rm=TRUE))
+x = mean(test$Chl,na.rm=TRUE) + sd(test$Chl,na.rm=TRUE)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll > x); dat1$bloom[I] <- "Yes"; rm(I)
+I <- which(dat1$Region == "Central" & dat1$Chlorophyll <= x); dat1$bloom[I] <- "No"; rm(I,test,x)
+
+p3<-ggplot()+geom_path(data = dat1 %>% filter(Region=="Central"),aes(x=Date,y=Chlorophyll),color="black")+
+  geom_point(data = dat1 %>% filter(Region=="Central" & bloom=="Yes"), aes(x = Date, y = Chlorophyll),color="blue")+ggtitle("Central")
+
+ggarrange(p1,p2,p3,ncol=1)
+
+rm(p1,p2,p3)
+
+```
+
+## Calculate HAB/BAB/No bloom using MVI
+"HAB" if MVI = 3-5 AND occurs from June to October. 
+"BAB" if MVI = 1-2 from June to October OR if the sample was collected during a bloom between November and May.
+"No bloom" if sample was collected between November and May and chlorophyll is below the bloom threshold.
+```{r, warning=FALSE, message=FALSE}
+
+dat1 <- dat1 %>%
+  group_by(Region) %>%
+  mutate(chl_threshold = mean(Chlorophyll, na.rm = TRUE) + sd(Chlorophyll, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    mvi_class = case_when(
+      is.na(Microcystis) ~ NA_character_,
+      Microcystis >= 3 & Month %in% 6:10 ~ "HAB",
+      Microcystis <= 2 & Month %in% 6:10 ~ "BAB",
+      Month %in% c(11, 12, 1:5) ~ "BAB",
+      TRUE ~ NA_character_
+    ),
+    mvi_class = case_when(
+      mvi_class == "BAB" & bloom == "Yes" ~ "BAB",
+      mvi_class == "BAB" & bloom == "No" ~ "No bloom",
+      TRUE ~ mvi_class
+    )
+  )
+
+dat <- dat1[, c("Survey","Year","Season","Month","Date","Region","Station","Latitude","Longitude",
+                 "SampleMethod","SampleDepth","DepthType","Lab","CountMethodSample","CountMethodTaxa",
+                 "Magnification","AlgalGroup","Genus","Cells_per_mL","Units_per_mL","Biovolume_per_mL",
+                 "tot_cells","tot_units","tot_bio","relative_cell_density","relative_unit_density",
+                 "relative_biovolume","chl_threshold","bloom","mvi_class",
+                 "Sample_depth_surface","Sample_depth_nutr_surface","Sample_depth_bottom","Microcystis",
+                 "Chlorophyll","Pheophytin","Temperature","Temperature_bottom","Conductivity",
+                 "Conductivity_bottom","Salinity","Salinity_bottom","Secchi","TurbidityNTU",
+                 "TurbidityNTU_bottom","TurbidityFNU","TurbidityFNU_bottom","DissolvedOxygen",
+                 "DissolvedOxygen_bottom","DissolvedOxygenPercent","DissolvedOxygenPercent_bottom","pH",
+                 "DissAmmonia","DissNitrateNitrite","TotPhos","DissOrthophos","TON","DON","TKN",
+                 "DissBromide","DissCalcium","TotChloride","DissChloride","DissSilica","TOC","DOC","TDS",
+                 "TSS","VSS","SAC","SJR","OUT","EXPORTS","Index","monthly_biomass","monthly_grazing_rate","monthly_filtration_rate")]
+
+```
+
+
+## NMDS - GENERA - full year
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP") %>% #, Month %in% 6:10
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+com.df <- phyt %>% pivot_wider(names_from = Genus, values_from = biovol, values_fill = 0)
+env.df <- com.df[,1:20]
+com.df <- com.df[,21:199]
+sites <- env.df %>% select(Date, Station, Year, Month)
+
+# Run NMDS
+com.trans <- sqrt(com.df)               # or log1p(com.df)
+com.trans <- wisconsin(com.trans)
+set.seed(20)
+com.MDS <- metaMDS(com.trans, distance = "bray", k = 3, trymax = 100, autotransform = FALSE)
+
+###NMDS output
+# points: sample scores
+# dims: number of NMS axes
+# stress: stress of final solutions
+# data: what was ordinated and any transformations
+# distance: distance metric used
+# converged: whether or not solution converged
+# tries: number of configurations tried
+# species: scores of variables
+# call: how function was called
+
+#check the stress
+com.MDS$stress # stress = 0.19
+##ABOUT STRESS: A good rule of thumb- 
+#stress < 0.05 provides an excellent representation in reduced dimensions, 
+# < 0.1 is great,
+# < 0.2 is good/ok, 
+# > 0.2 provides a poor representation
+
+envfit(com.MDS, env.df[,c(3,5,7:20)],na.rm=TRUE)
+
+# ============================================================
+# BUILD THE RDA MODEL  (this was missing)
+# ============================================================
+# Predictor set — the five variables meaningful at genus level
+vars <- c("Temperature","Conductivity","TurbidityFNU","DissAmmonia","monthly_grazing_rate")
+
+# Hellinger transform for RDA (appropriate for community data + Euclidean-based RDA)
+com.hell <- decostand(com.df, method = "hellinger")
+
+# Drop rows with missing environmental data — from BOTH matrices, same index
+keep <- complete.cases(env.df[, vars])
+com.hell.sub <- com.hell[keep, ]
+env.sub      <- env.df[keep, ]
+
+rda.mod <- rda(com.hell.sub ~ Temperature + Conductivity + TurbidityFNU +
+                              DissAmmonia + monthly_grazing_rate,
+               data = env.sub)
+
+# ============================================================
+# DIAGNOSTICS
+# ============================================================
+
+# ------------------------------------------------------------
+# PART 1 — RDA diagnostics (constrained model: testable)
+# ------------------------------------------------------------
+cat("############### RDA DIAGNOSTICS ###############\n")
+cat("\nRows used:", nrow(env.sub), "of", nrow(env.df),
+    "(", nrow(env.df) - nrow(env.sub), "dropped for missingness )\n")
+
+cat("\n=== VIF (want < 5) ===\n");                print(vif.cca(rda.mod))
+cat("\n=== Overall significance ===\n");          print(anova(rda.mod, permutations = 999))
+cat("\n=== Marginal (per-variable) ===\n");        print(anova(rda.mod, by = "margin", permutations = 999))
+cat("\n=== Axis significance ===\n");              print(anova(rda.mod, by = "axis", permutations = 999))
+cat("\n=== Variance explained (adj. R2) ===\n");   print(RsquareAdj(rda.mod))
+
+# axis identity from biplot scores
+bp <- scores(rda.mod, display = "bp", choices = 1:3)
+cat("\n=== Biplot scores (variable loadings per axis) ===\n"); print(round(bp, 3))
+rda_axis_lab <- function(bp, axis) {
+  col <- bp[, axis]; top <- names(which.max(abs(col)))
+  sprintf("%s: %s (%s)", axis, top, ifelse(col[top] > 0, "+", "-"))
+}
+cat("\n=== Suggested RDA axis identities ===\n")
+for (a in colnames(bp)) cat(rda_axis_lab(bp, a), "\n")
+
+# ------------------------------------------------------------
+# PART 2 — NMDS diagnostics (unconstrained: fit + group tests)
+# ------------------------------------------------------------
+cat("\n\n############### NMDS DIAGNOSTICS ###############\n")
+
+# (a) stress & convergence
+cat("\n=== Stress ===\n"); print(com.MDS$stress)
+cat("Rule of thumb: <0.1 great, <0.2 usable, >0.2 poor\n")
+cat("\n=== Convergence ===\n")
+cat("Converged:", com.MDS$converged, " | tries:", com.MDS$tries, "\n")
+# note: if converged = FALSE, consider raising trymax or k
+
+# (b) Shepard plot: non-metric & linear fit R2 (how well distances are preserved)
+cat("\n=== Shepard / stress plot (opens a plot) ===\n")
+stressplot(com.MDS)   # visual; reports non-metric & linear R2 on the plot
+
+# (c) scree: stress vs number of dimensions (is k adequate?)
+cat("\n=== Stress by dimensionality (k = 1..4) — this refits, may be slow ===\n")
+set.seed(20)
+k_stress <- sapply(1:4, function(k) {
+  m <- metaMDS(com.trans, distance = "bray", k = k, trymax = 20,
+               autotransform = FALSE, trace = 0)
+  m$stress
+})
+print(data.frame(k = 1:4, stress = round(k_stress, 3)))
+cat("Look for the 'elbow' — where added dimensions stop reducing stress much.\n")
+
+# (d) envfit: post-hoc variable correlations (NOT a model test — descriptive)
+cat("\n=== envfit (post-hoc variable correlations) ===\n")
+ef <- envfit(com.MDS, env.df[, vars], na.rm = TRUE, permutations = 999, choices = c(1,2))
+print(ef)
+
+# NMDS axis identity from envfit vectors, weighted by sqrt(r2)
+ev <- as.data.frame(scores(ef, display = "vectors", choices = c(1,2)))
+ev$r2 <- ef$vectors$r
+nmds_axis_lab <- function(ev, axis) {
+  w <- abs(ev[[axis]]) * sqrt(ev$r2); top <- rownames(ev)[which.max(w)]
+  sprintf("%s: %s (%s)", axis, top, ifelse(ev[top, axis] > 0, "+", "-"))
+}
+cat("\n=== Suggested NMDS axis identities ===\n")
+cat(nmds_axis_lab(ev, "NMDS1"), "\n"); cat(nmds_axis_lab(ev, "NMDS2"), "\n")
+
+# (e) PERMANOVA — the actual TEST of group differences on the dissimilarity matrix
+#     This is the NMDS-world equivalent of asking "do regions/seasons differ?"
+cat("\n=== PERMANOVA (adonis2) on Bray-Curtis ===\n")
+# align community + grouping, dropping NA rows in the grouping vars
+grp <- env.df[, c("Region","Season")]
+ok  <- complete.cases(grp)
+d.bray <- vegdist(com.trans[ok, ], method = "bray")
+set.seed(20)
+perm <- adonis2(d.bray ~ Region + Season, data = grp[ok, ],
+                permutations = 999, by = "margin")
+print(perm)
+
+# (f) betadisper — ESSENTIAL companion: is a significant PERMANOVA due to
+#     different group *centroids* (real separation) or different *dispersion* (spread)?
+cat("\n=== betadisper (homogeneity of dispersion) ===\n")
+cat("\n-- Region --\n")
+bd.region <- betadisper(d.bray, grp$Region[ok])
+print(anova(bd.region))     # significant => groups differ in spread, not just location
+cat("\n-- Season --\n")
+bd.season <- betadisper(d.bray, grp$Season[ok])
+print(anova(bd.season))
+
+# ============================================================
+# Assumes all-months genus objects in scope: com.df, env.df, com.MDS, rda.mod
+# (rda.mod built on all-months data as in the diagnostic block)
+# ============================================================
+
+clean_labs <- function(v) {
+  v <- gsub("TurbidityFNU",         "Turbidity",    v)
+  v <- gsub("monthly_grazing_rate", "Grazing rate", v)
+  v <- gsub("DissAmmonia",          "Ammonia",      v)
+  v
+}
+
+# ============================================================
+# AXIS INTERPRETATION CHECKS (both methods, same logic)
+# ============================================================
+
+# --- RDA: biplot scores tell you the axis identity directly ---
+bp <- scores(rda.mod, display = "bp", choices = 1:2)
+rda_axis_lab <- function(bp, axis) {
+  col <- bp[, axis]; top <- names(which.max(abs(col)))
+  sprintf("%s (%s, %s)", axis, clean_labs(top), ifelse(col[top] > 0, "+", "-"))
+}
+cat("RDA1:", rda_axis_lab(bp, "RDA1"), "\n")
+cat("RDA2:", rda_axis_lab(bp, "RDA2"), "\n")
+
+# --- NMDS: no biplot scores; use envfit vectors weighted by r2 ---
+ef <- envfit(com.MDS, env.df[, vars], na.rm = TRUE, permutations = 999, choices = c(1,2))
+ev <- as.data.frame(scores(ef, display = "vectors", choices = c(1,2)))
+ev$r2 <- ef$vectors$r     # r2 for each vector
+nmds_axis_lab <- function(ev, axis) {
+  w <- abs(ev[[axis]]) * sqrt(ev$r2)          # weight direction by strength
+  top <- rownames(ev)[which.max(w)]
+  sprintf("%s (%s, %s)", axis, clean_labs(top), ifelse(ev[top, axis] > 0, "+", "-"))
+}
+cat("NMDS1:", nmds_axis_lab(ev, "NMDS1"), "\n")
+cat("NMDS2:", nmds_axis_lab(ev, "NMDS2"), "\n")
+# Both should report turbidity (axis 1) and temperature (axis 2)
+
+# ============================================================
+# FIGURE 1: GENUS RDA  (RDA2 relabeled to temperature)
+# ============================================================
+site.rda <- as.data.frame(scores(rda.mod, display = "sites", choices = 1:2))
+site.rda$Region <- env.sub$Region
+site.rda$Season <- env.sub$Season          # for the faceted version
+
+sp.rda <- as.data.frame(scores(rda.mod, display = "species", choices = 1:2))
+sp.rda$genus <- rownames(sp.rda)
+sp.rda$d <- sqrt(sp.rda$RDA1^2 + sp.rda$RDA2^2)
+top.rda <- sp.rda[sp.rda$genus != "Unknown", ]
+top.rda <- top.rda[order(-top.rda$d), ][1:12, ]
+
+bp.rda <- as.data.frame(scores(rda.mod, display = "bp", choices = 1:2))
+bp.rda$var <- clean_labs(rownames(bp.rda))
+
+arr <- 0.6; labm <- 1.12
+xlab_rda <- "RDA1 (turbidity gradient)"
+ylab_rda <- "RDA2 (temperature gradient)"     # <-- corrected label
+
+rda.env <- ggplot(site.rda, aes(RDA1, RDA2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = bp.rda, aes(x=0, y=0, xend=RDA1*arr, yend=RDA2*arr),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+    geom_text_repel(data = bp.rda,aes(x = RDA1*arr*labm, y = RDA2*arr*labm, label = var),
+            color = "grey15", size = 3.2, fontface = "bold",
+            segment.color = "grey60", segment.size = 0.3, box.padding = 0.5, 
+            max.overlaps = Inf, seed = 1, inherit.aes = FALSE) +
+  coord_equal() +
+  scale_x_continuous(expand = expansion(mult = 0.18)) +
+  scale_y_continuous(expand = expansion(mult = 0.18)) +
+  labs(x = xlab_rda, y = ylab_rda, color = "Region") +
+  theme_minimal(base_size = 12)
+
+lim.rda <- max(abs(c(top.rda$RDA1, top.rda$RDA2))) * 1.5
+rda.sp <- ggplot(top.rda, aes(RDA1, RDA2)) +
+  geom_point(color = "steelblue4", size = 2) +
+  geom_text_repel(aes(label = genus), color = "steelblue4",
+                  size = 3, fontface = "italic", max.overlaps = Inf, seed = 1) +
+  geom_segment(data = bp.rda, aes(x=0, y=0, xend=RDA1*arr, yend=RDA2*arr),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text_repel(data = bp.rda,aes(x = RDA1*arr*labm, y = RDA2*arr*labm, label = var),
+            color = "grey15", size = 3.2, fontface = "bold",
+            segment.color = "grey60", segment.size = 0.3, box.padding = 0.5, 
+            max.overlaps = Inf, seed = 1, inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim.rda, lim.rda), ylim = c(-lim.rda, lim.rda)) +
+  labs(x = xlab_rda, y = ylab_rda) +
+  theme_minimal(base_size = 12)
+
+fig.rda <- (rda.env + rda.sp) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")",
+                  title = "Genus-level RDA (all months)") &
+  theme(legend.position = "bottom", plot.tag = element_text(face = "bold"))
+
+# ============================================================
+# FIGURE 2: GENUS NMDS  (interpretation now references temperature)
+# ============================================================
+site.mds <- as.data.frame(scores(com.MDS, display = "sites", choices = c(1,2)))
+site.mds$Region <- env.df$Region
+site.mds$Season <- env.df$Season
+
+sp.mds <- as.data.frame(scores(com.MDS, display = "species", choices = c(1,2)))
+sp.mds$genus <- rownames(sp.mds)
+top.mds <- sp.mds[sp.mds$genus %in% top.rda$genus, ]
+
+vec.mds <- as.data.frame(scores(ef, display = "vectors", choices = c(1,2)))
+vec.mds$var <- clean_labs(rownames(vec.mds))
+
+vrange   <- max(abs(c(vec.mds$NMDS1, vec.mds$NMDS2)))
+arr.site <- 0.85 * max(abs(c(site.mds$NMDS1, site.mds$NMDS2))) / vrange
+arr.sp   <- 0.85 * max(abs(c(top.mds$NMDS1,  top.mds$NMDS2)))  / vrange
+
+mds.env <- ggplot(site.mds, aes(NMDS1, NMDS2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = vec.mds, aes(x=0, y=0, xend=NMDS1*arr.site, yend=NMDS2*arr.site),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds, aes(x=NMDS1*arr.site*labm, y=NMDS2*arr.site*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  scale_x_continuous(expand = expansion(mult = 0.18)) +
+  scale_y_continuous(expand = expansion(mult = 0.18)) +
+  annotate("text", x = -Inf, y = -Inf, hjust = -0.1, vjust = -0.8,
+           label = paste0("Stress = ", round(com.MDS$stress, 2)), size = 3) +
+  labs(x = "NMDS1", y = "NMDS2", color = "Region") +
+  theme_minimal(base_size = 12)
+
+lim.mds <- max(abs(c(top.mds$NMDS1, top.mds$NMDS2))) * 1.5
+mds.sp <- ggplot(top.mds, aes(NMDS1, NMDS2)) +
+  geom_point(color = "steelblue4", size = 2) +
+  geom_text_repel(aes(label = genus), color = "steelblue4",
+                  size = 3, fontface = "italic", max.overlaps = Inf, seed = 1) +
+  geom_segment(data = vec.mds, aes(x=0, y=0, xend=NMDS1*arr.sp, yend=NMDS2*arr.sp),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds, aes(x=NMDS1*arr.sp*labm, y=NMDS2*arr.sp*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim.mds, lim.mds), ylim = c(-lim.mds, lim.mds)) +
+  labs(x = "NMDS1", y = "NMDS2") +
+  theme_minimal(base_size = 12)
+
+fig.mds <- (mds.env + mds.sp) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")",
+                  title = "Genus-level NMDS (all months)") &
+  theme(legend.position = "bottom", plot.tag = element_text(face = "bold"))
+
+# ============================================================
+# FIGURE 3: SEASON-FACETED NMDS site ordination
+# Shows seasonal turnover directly (points colored by Region, faceted by Season)
+# ============================================================
+# ensure Season is an ordered factor so facets read Winter->Autumn
+season_levels <- c("Winter","Spring","Summer","Autumn")
+site.mds$Season <- factor(site.mds$Season,
+                          levels = season_levels[season_levels %in% unique(site.mds$Season)])
+
+fig.season <- ggplot(site.mds, aes(NMDS1, NMDS2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.4) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = vec.mds, aes(x=0, y=0, xend=NMDS1*arr.site, yend=NMDS2*arr.site),
+               arrow = arrow(length = unit(0.15,"cm")),
+               color = "grey15", linewidth = 0.5, inherit.aes = FALSE) +
+  geom_text(data = vec.mds, aes(x=NMDS1*arr.site*labm, y=NMDS2*arr.site*labm, label=var),
+            color = "grey15", size = 2.6, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  facet_wrap(~ Season) +
+  labs(x = "NMDS1", y = "NMDS2", color = "Region",
+       title = "Seasonal turnover in phytoplankton community (NMDS)") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+
+# ---- Display / save ----
+fig.rda
+fig.mds
+fig.season
+# ggsave("genus_RDA_allmonths.png",  fig.rda,    width = 10, height = 5.5, dpi = 300)
+# ggsave("genus_NMDS_allmonths.png", fig.mds,    width = 10, height = 5.5, dpi = 300)
+# ggsave("genus_NMDS_byseason.png",  fig.season, width = 9,  height = 8,   dpi = 300)
+
+
+```
+
+## NMDS - GENERA - summer
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", Month %in% 6:10) %>% 
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+com.df <- phyt %>% pivot_wider(names_from = Genus, values_from = biovol, values_fill = 0)
+env.df <- com.df[,1:20]
+com.df <- com.df[,21:199]
+sites <- env.df %>% select(Date, Station, Year, Month)
+
+# Run NMDS
+com.trans <- sqrt(com.df)               # or log1p(com.df)
+com.trans <- wisconsin(com.trans)
+set.seed(20)
+com.MDS <- metaMDS(com.trans, distance = "bray", k = 3, trymax = 100, autotransform = FALSE)
+
+###NMDS output
+# points: sample scores
+# dims: number of NMS axes
+# stress: stress of final solutions
+# data: what was ordinated and any transformations
+# distance: distance metric used
+# converged: whether or not solution converged
+# tries: number of configurations tried
+# species: scores of variables
+# call: how function was called
+
+#check the stress
+com.MDS$stress # stress = 0.19
+##ABOUT STRESS: A good rule of thumb- 
+#stress < 0.05 provides an excellent representation in reduced dimensions, 
+# < 0.1 is great,
+# < 0.2 is good/ok, 
+# > 0.2 provides a poor representation
+
+envfit(com.MDS, env.df[,c(3,5,7:20)],na.rm=TRUE)
+
+library(vegan)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+
+# ============================================================
+# ASSUMES the GENUS-level objects are in scope:
+#   com.df      = genus community matrix (896 x 178)
+#   env.df      = environmental data (aligned rows)
+#   com.MDS     = genus NMDS (k=3, stress 0.19)
+# If com.hell doesn't exist yet, this rebuilds it from genus com.df.
+# ============================================================
+
+# ---- Genus RDA ----
+com.hell <- decostand(com.df, method = "hellinger")
+vars <- c("Temperature","Conductivity","TurbidityFNU","DissAmmonia","monthly_grazing_rate")
+keep <- complete.cases(env.df[, vars])
+com.hell.sub <- com.hell[keep, ]
+env.sub      <- env.df[keep, ]
+
+rda.mod <- rda(com.hell.sub ~ Temperature + Conductivity + TurbidityFNU +
+                              DissAmmonia + monthly_grazing_rate, data = env.sub)
+
+# ---- Shared label cleaner ----
+clean_labs <- function(v) {
+  v <- gsub("TurbidityFNU",         "Turbidity",    v)
+  v <- gsub("monthly_grazing_rate", "Grazing rate", v)
+  v <- gsub("DissAmmonia",          "Ammonia",      v)
+  v
+}
+
+# ============================================================
+# FIGURE 1: GENUS RDA
+# ============================================================
+site.rda <- as.data.frame(scores(rda.mod, display = "sites", choices = 1:2))
+site.rda$Region <- env.sub$Region
+
+sp.rda <- as.data.frame(scores(rda.mod, display = "species", choices = 1:2))
+sp.rda$genus <- rownames(sp.rda)
+sp.rda$d <- sqrt(sp.rda$RDA1^2 + sp.rda$RDA2^2)
+top.rda <- sp.rda[sp.rda$genus != "Unknown", ]
+top.rda <- top.rda[order(-top.rda$d), ][1:12, ]
+
+bp.rda <- as.data.frame(scores(rda.mod, display = "bp", choices = 1:2))
+bp.rda$var <- clean_labs(rownames(bp.rda))
+
+arr <- 0.6; labm <- 1.12
+
+rda.env <- ggplot(site.rda, aes(RDA1, RDA2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = bp.rda, aes(x=0, y=0, xend=RDA1*arr, yend=RDA2*arr),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = bp.rda, aes(x=RDA1*arr*labm, y=RDA2*arr*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  scale_x_continuous(expand = expansion(mult = 0.18)) +
+  scale_y_continuous(expand = expansion(mult = 0.18)) +
+  labs(x = "RDA1 (turbidity gradient)", y = "RDA2 (grazing gradient)", color = "Region") +
+  theme_minimal(base_size = 12)
+
+lim.rda <- max(abs(c(top.rda$RDA1, top.rda$RDA2))) * 1.5
+rda.sp <- ggplot(top.rda, aes(RDA1, RDA2)) +
+  geom_point(color = "steelblue4", size = 2) +
+  geom_text_repel(aes(label = genus), color = "steelblue4",
+                  size = 3, fontface = "italic", max.overlaps = Inf, seed = 1) +
+  geom_segment(data = bp.rda, aes(x=0, y=0, xend=RDA1*arr, yend=RDA2*arr),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = bp.rda, aes(x=RDA1*arr*labm, y=RDA2*arr*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim.rda, lim.rda), ylim = c(-lim.rda, lim.rda)) +
+  labs(x = "RDA1 (turbidity gradient)", y = "RDA2 (grazing gradient)") +
+  theme_minimal(base_size = 12)
+
+fig.rda <- (rda.env + rda.sp) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")",
+                  title = "Genus-level RDA") &
+  theme(legend.position = "bottom", plot.tag = element_text(face = "bold"))
+
+# ============================================================
+# FIGURE 2: GENUS NMDS  (same 12 genera as the RDA)
+# ============================================================
+ef <- envfit(com.MDS, env.df[, vars], na.rm = TRUE, permutations = 999, choices = c(1,2))
+
+site.mds <- as.data.frame(scores(com.MDS, display = "sites", choices = c(1,2)))
+site.mds$Region <- env.df$Region
+
+sp.mds <- as.data.frame(scores(com.MDS, display = "species", choices = c(1,2)))
+sp.mds$genus <- rownames(sp.mds)
+top.mds <- sp.mds[sp.mds$genus %in% top.rda$genus, ]   # same taxa as RDA panel
+
+vec.mds <- as.data.frame(scores(ef, display = "vectors", choices = c(1,2)))
+vec.mds$var <- clean_labs(rownames(vec.mds))
+
+# arrows scaled separately to each panel's cloud (NMDS site & species scales differ)
+vrange   <- max(abs(c(vec.mds$NMDS1, vec.mds$NMDS2)))
+arr.site <- 0.85 * max(abs(c(site.mds$NMDS1, site.mds$NMDS2))) / vrange
+arr.sp   <- 0.85 * max(abs(c(top.mds$NMDS1,  top.mds$NMDS2)))  / vrange
+
+mds.env <- ggplot(site.mds, aes(NMDS1, NMDS2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = vec.mds, aes(x=0, y=0, xend=NMDS1*arr.site, yend=NMDS2*arr.site),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds, aes(x=NMDS1*arr.site*labm, y=NMDS2*arr.site*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  scale_x_continuous(expand = expansion(mult = 0.18)) +
+  scale_y_continuous(expand = expansion(mult = 0.18)) +
+  annotate("text", x = -Inf, y = -Inf, hjust = -0.1, vjust = -0.8,
+           label = "Stress = 0.19", size = 3) +
+  labs(x = "NMDS1", y = "NMDS2", color = "Region") +
+  theme_minimal(base_size = 12)
+
+lim.mds <- max(abs(c(top.mds$NMDS1, top.mds$NMDS2))) * 1.5
+mds.sp <- ggplot(top.mds, aes(NMDS1, NMDS2)) +
+  geom_point(color = "steelblue4", size = 2) +
+  geom_text_repel(aes(label = genus), color = "steelblue4",
+                  size = 3, fontface = "italic", max.overlaps = Inf, seed = 1) +
+  geom_segment(data = vec.mds, aes(x=0, y=0, xend=NMDS1*arr.sp, yend=NMDS2*arr.sp),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds, aes(x=NMDS1*arr.sp*labm, y=NMDS2*arr.sp*labm, label=var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim.mds, lim.mds), ylim = c(-lim.mds, lim.mds)) +
+  labs(x = "NMDS1", y = "NMDS2") +
+  theme_minimal(base_size = 12)
+
+fig.mds <- (mds.env + mds.sp) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")",
+                  title = "Genus-level NMDS") &
+  theme(legend.position = "bottom", plot.tag = element_text(face = "bold"))
+
+# ---- Display / save ----
+fig.rda
+fig.mds
+# ggsave("genus_RDA.png", fig.rda, width = 10, height = 5.5, dpi = 300)
+# ggsave("genus_NMDS.png", fig.mds, width = 10, height = 5.5, dpi = 300)
+
+
+# --- assumes the all-months objects are in scope ---
+#   com.df (genus matrix, all months), env.df (aligned), rda.mod already built
+# If rda.mod isn't rebuilt on the all-months data yet, rebuild it:
+com.hell <- decostand(com.df, method = "hellinger")
+vars <- c("Temperature","Conductivity","TurbidityFNU","DissAmmonia","monthly_grazing_rate")
+keep <- complete.cases(env.df[, vars])
+com.hell.sub <- com.hell[keep, ]
+env.sub      <- env.df[keep, ]
+rda.mod <- rda(com.hell.sub ~ Temperature + Conductivity + TurbidityFNU +
+                              DissAmmonia + monthly_grazing_rate, data = env.sub)
+
+# --- how many rows actually went in (after NA drop)? ---
+cat("Rows used:", nrow(env.sub), "of", nrow(env.df),
+    "(", nrow(env.df) - nrow(env.sub), "dropped for missingness )\n\n")
+
+# --- core diagnostics ---
+cat("=== VIF ===\n");             print(vif.cca(rda.mod))
+cat("\n=== Overall significance ===\n"); print(anova(rda.mod, permutations = 999))
+cat("\n=== Marginal (per-variable) ===\n"); print(anova(rda.mod, by = "margin", permutations = 999))
+cat("\n=== Axis significance ===\n");       print(anova(rda.mod, by = "axis", permutations = 999))
+cat("\n=== Variance explained ===\n");      print(RsquareAdj(rda.mod))
+
+# --- biplot scores: which variable defines each axis ---
+bp <- scores(rda.mod, display = "bp", choices = 1:3)
+cat("\n=== Biplot scores (env variable loadings on each axis) ===\n")
+print(round(bp, 3))
+
+# --- auto-identify the dominant variable on RDA1 and RDA2 ---
+lab_for_axis <- function(bp, axis) {
+  col <- bp[, axis]
+  top <- names(which.max(abs(col)))
+  sign <- ifelse(col[top] > 0, "+", "-")
+  sprintf("%s (dominated by %s, %s)", axis, top, sign)
+}
+cat("\n=== Suggested axis identities ===\n")
+cat(lab_for_axis(bp, "RDA1"), "\n")
+cat(lab_for_axis(bp, "RDA2"), "\n")
+
+# --- genus scores along each axis (top/bottom responders) ---
+sp1 <- sort(scores(rda.mod, display = "species", choices = 1)[,1])
+sp2 <- sort(scores(rda.mod, display = "species", choices = 2)[,1])
+cat("\n=== RDA1: 6 most negative / 6 most positive genera ===\n")
+print(round(c(head(sp1,6), tail(sp1,6)), 3))
+cat("\n=== RDA2: 6 most negative / 6 most positive genera ===\n")
+print(round(c(head(sp2,6), tail(sp2,6)), 3))
+
+## OTHER############################################
+#First we will extract the coordinates
+coords <- com.MDS$points
+#add site and year
+coords <- cbind(sites, coords)
+
+#Since our env data was taken supplementary to the survey we can use the function envfit()
+envft <- envfit(com.MDS, env.df[,c(3,5,7:20)],na.rm=TRUE,choices=c(1,2))
+envft
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = as.factor(env.df$mvi_class))) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(3, "RdYlBu"))(3),name="")+
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = as.factor(env.df$Month))) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(5, "RdYlBu"))(5),name="Month")+
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = env.df$TurbidityFNU)) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_distiller(palette = "RdYlBu", name = "Turbidity (FNU)") +
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = env.df$TurbidityFNU)) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_distiller(palette = "RdYlBu", name = "Turbidity (FNU)") +
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+```
+
+
+## NMDS - ALGAL GROUP - summer
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", Month %in% 6:10) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+com.df <- phyt %>% pivot_wider(names_from = AlgalGroup, values_from = biovol, values_fill = 0)
+env.df <- com.df[,1:20]
+com.df <- com.df[,21:32]
+sites <- env.df %>% select(Date, Station, Year, Month)
+
+# Run NMDS
+com.trans <- sqrt(com.df)               # or log1p(com.df)
+com.trans <- wisconsin(com.trans)
+set.seed(20)
+com.MDS <- metaMDS(com.trans, distance = "bray", k = 3, trymax = 100, autotransform = FALSE)
+
+###NMDS output
+# points: sample scores
+# dims: number of NMS axes
+# stress: stress of final solutions
+# data: what was ordinated and any transformations
+# distance: distance metric used
+# converged: whether or not solution converged
+# tries: number of configurations tried
+# species: scores of variables
+# call: how function was called
+
+#check the stress
+com.MDS$stress # stress = 0.146
+##ABOUT STRESS: A good rule of thumb- 
+#stress < 0.05 provides an excellent representation in reduced dimensions, 
+# < 0.1 is great,
+# < 0.2 is good/ok, 
+# > 0.2 provides a poor representation
+
+envfit(com.MDS, env.df[,c(3,5,7:20)],na.rm=TRUE)
+
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+
+ef <- envfit(com.MDS, env.df[, c("TurbidityFNU","Secchi","monthly_grazing_rate")],
+             na.rm = TRUE, permutations = 999, choices = c(1,2))
+
+site.mds <- as.data.frame(scores(com.MDS, display = "sites", choices = c(1,2)))
+site.mds$Region <- env.df$Region
+
+sp.mds <- as.data.frame(scores(com.MDS, display = "species", choices = c(1,2)))
+sp.mds$AlgalGroup <- rownames(sp.mds)
+
+vec.mds <- as.data.frame(scores(ef, display = "vectors", choices = c(1,2)))
+vec.mds$var <- rownames(vec.mds)
+vec.mds$var <- gsub("TurbidityFNU",         "Turbidity",    vec.mds$var)
+vec.mds$var <- gsub("monthly_grazing_rate", "Grazing rate", vec.mds$var)
+
+# --- Scale each panel's arrows to that panel's point cloud ---
+sp_range   <- max(abs(c(sp.mds$NMDS1,   sp.mds$NMDS2)))
+site_range <- max(abs(c(site.mds$NMDS1, site.mds$NMDS2)))
+vec_range  <- max(abs(c(vec.mds$NMDS1,  vec.mds$NMDS2)))
+
+arr_mult      <- 0.85 * sp_range   / vec_range
+arr_mult_site <- 0.85 * site_range / vec_range
+lab_mult <- 1.10
+
+# --- Panel A: sites ---
+mds.env.panel <- ggplot(site.mds, aes(NMDS1, NMDS2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = vec.mds,
+               aes(x = 0, y = 0, xend = NMDS1*arr_mult_site, yend = NMDS2*arr_mult_site),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds,
+            aes(x = NMDS1*arr_mult_site*lab_mult, y = NMDS2*arr_mult_site*lab_mult, label = var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  annotate("text", x = -Inf, y = -Inf, hjust = -0.1, vjust = -0.8,
+           label = "Stress = 0.15", size = 3) +
+  labs(x = "NMDS1", y = "NMDS2", color = "Region") +
+  theme_minimal(base_size = 12)
+
+# --- Panel B: groups — points FIRST, arrows scaled to fit, explicit limits ---
+lim <- sp_range * 1.4    # give the labels room
+
+mds.sp.panel <- ggplot(sp.mds, aes(NMDS1, NMDS2)) +
+  geom_point(color = "steelblue4", size = 2.5) +
+  geom_text_repel(aes(label = AlgalGroup), color = "steelblue4",
+                  size = 3, max.overlaps = Inf, seed = 1) +
+  geom_segment(data = vec.mds,
+               aes(x = 0, y = 0, xend = NMDS1*arr_mult, yend = NMDS2*arr_mult),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = vec.mds,
+            aes(x = NMDS1*arr_mult*lab_mult, y = NMDS2*arr_mult*lab_mult, label = var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim, lim), ylim = c(-lim, lim)) +
+  labs(x = "NMDS1", y = "NMDS2") +
+  theme_minimal(base_size = 12)
+
+(mds.env.panel + mds.sp.panel) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")") &
+  theme(legend.position = "bottom",
+        plot.tag = element_text(face = "bold"))
+
+
+#####RDA model################################################
+
+library(vegan)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+
+# --- IMPORTANT: build com.hell from the AlgalGroup community matrix ---
+# (com.df here must be the 12-column AlgalGroup matrix, not the genus one)
+com.hell <- decostand(com.df, method = "hellinger")
+
+# --- Model ---
+vars <- c("TurbidityFNU","monthly_grazing_rate")
+keep <- complete.cases(env.df[, vars])
+com.hell.sub <- com.hell[keep, ]
+env.sub      <- env.df[keep, ]
+
+rda.mod <- rda(com.hell.sub ~ TurbidityFNU + monthly_grazing_rate,
+               data = env.sub)
+
+# --- Diagnostics ---
+vif.cca(rda.mod)
+anova(rda.mod, permutations = 999)
+anova(rda.mod, by = "margin", permutations = 999)
+anova(rda.mod, by = "axis", permutations = 999)
+RsquareAdj(rda.mod)
+scores(rda.mod, display = "bp", choices = 1:3)
+
+# --- Extract scores ---
+site.rda <- as.data.frame(scores(rda.mod, display = "sites", choices = 1:2))
+site.rda$Region <- env.sub$Region
+
+# 12 groups — keep them all, no distance filtering, no "Unknown" exclusion
+sp.rda <- as.data.frame(scores(rda.mod, display = "species", choices = 1:2))
+sp.rda$AlgalGroup <- rownames(sp.rda)
+
+# --- Environmental arrows ---
+bp <- as.data.frame(scores(rda.mod, display = "bp", choices = 1:2))
+bp$var <- rownames(bp)
+bp$var <- gsub("TurbidityFNU",         "Turbidity",    bp$var)
+bp$var <- gsub("monthly_grazing_rate", "Grazing rate", bp$var)
+bp$var <- gsub("DissAmmonia",          "Ammonia",      bp$var)
+
+arr_mult <- 0.6
+lab_mult <- 1.12
+
+# --- Panel A: sites + ellipses + arrows ---
+env.panel <- ggplot(site.rda, aes(RDA1, RDA2)) +
+  geom_point(aes(color = Region), alpha = 0.4, size = 1.6) +
+  stat_ellipse(aes(color = Region), level = 0.68) +
+  geom_segment(data = bp,
+               aes(x = 0, y = 0, xend = RDA1*arr_mult, yend = RDA2*arr_mult),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = bp,
+            aes(x = RDA1*arr_mult*lab_mult, y = RDA2*arr_mult*lab_mult, label = var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal() +
+  scale_x_continuous(expand = expansion(mult = 0.18)) +
+  scale_y_continuous(expand = expansion(mult = 0.18)) +
+  labs(x = "RDA1", y = "RDA2", color = "Region") +
+  theme_minimal(base_size = 12)
+
+# --- Panel B: groups + arrows (points first, explicit limits) ---
+lim <- max(abs(c(sp.rda$RDA1, sp.rda$RDA2))) * 1.5
+
+sp.panel <- ggplot(sp.rda, aes(RDA1, RDA2)) +
+  geom_point(color = "steelblue4", size = 2.5) +
+  geom_text_repel(aes(label = AlgalGroup), color = "steelblue4",
+                  size = 3, max.overlaps = Inf, seed = 1) +
+  geom_segment(data = bp,
+               aes(x = 0, y = 0, xend = RDA1*arr_mult, yend = RDA2*arr_mult),
+               arrow = arrow(length = unit(0.2,"cm")),
+               color = "grey15", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_text(data = bp,
+            aes(x = RDA1*arr_mult*lab_mult, y = RDA2*arr_mult*lab_mult, label = var),
+            color = "grey15", size = 3.2, fontface = "bold", inherit.aes = FALSE) +
+  coord_equal(xlim = c(-lim, lim), ylim = c(-lim, lim)) +
+  labs(x = "RDA1", y = "RDA2") +
+  theme_minimal(base_size = 12)
+
+# --- Combine ---
+(env.panel + sp.panel) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")") &
+  theme(legend.position = "bottom",
+        plot.tag = element_text(face = "bold"))
+
+## OTHER############################################
+#First we will extract the coordinates
+coords <- com.MDS$points
+#add site and year
+coords <- cbind(sites, coords)
+
+#Since our env data was taken supplementary to the survey we can use the function envfit()
+envft <- envfit(com.MDS, env.df[,c(3,5,7:20)],na.rm=TRUE,choices=c(1,2))
+envft
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = as.factor(env.df$mvi_class))) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(3, "RdYlBu"))(3),name="")+
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = as.factor(env.df$Month))) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(5, "RdYlBu"))(5),name="Month")+
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = env.df$TurbidityFNU)) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_distiller(palette = "RdYlBu", name = "Turbidity (FNU)") +
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+ggplot(data = coords, aes(x = MDS1, y = MDS2, fill = env.df$TurbidityFNU)) +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
+  geom_point(data = coords, size = 2.5, alpha = 0.9,pch=21) +
+  scale_fill_distiller(palette = "RdYlBu", name = "Turbidity (FNU)") +
+  theme(axis.title = element_text(size = 10, colour = "black"),
+        panel.background = element_blank(), panel.border = element_rect(fill = NA, colour = "black"),
+        axis.text = element_text(size = 12, colour = "black"), legend.key = element_blank(),
+        legend.title = element_text(size = 12, colour = "black"),
+        legend.text = element_text(size = 9, colour = "black"), legend.position = "right",
+        axis.title.x = element_text(size = 12),
+        plot.title = element_text(size = 12, hjust = 0.5)) +
+  labs(x = "NMDS 1", y = "NMDS 2") 
+
+```
+
+## Cluster analysis
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", Month %in% 6:10) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") %>%
+  mutate(sqbiovol= sqrt(biovol))
+
+com.df <- phyt %>% pivot_wider(names_from = Genus, values_from = biovol, values_fill = 0)
+env.df <- com.df[,1:21]
+com.df <- com.df[,22:200]
+sites <- env.df %>% select(Date, Station, Year, Month)
+com.t <- decostand(com.df, method = "total")   # or "total", or log
+
+# Cluster analysis
+com.df[is.na(com.df)] <- 0
+  dis <- vegdist (com.t, method = 'bray') 
+  hc <- hclust(dis,method="ward.D2")
+
+plot(hc,main = ' ',ylab="Bray-Curtis Distance")
+rect.hclust(hc, k = 4, border = 2:5) 
+
+# Assess number of clusters
+library(cluster)
+library(factoextra)
+
+gap <- clusGap(as.matrix(dis), FUN = hcut, K.max = 10, B = 100)
+fviz_gap_stat(gap)
+
+fviz_nbclust(as.matrix(dis), FUN = hcut, method = "wss",
+             hc_method = "ward.D2", diss = dis)
+
+fviz_nbclust(as.matrix(dis), FUN = hcut, method = "silhouette",
+             hc_method = "ward.D2", diss = dis)
+
+# Final number of clusters to use
+grp <- cutree(hc, k = 4)
+
+# Cluster figures
+env.df$group <- factor(grp[rownames(env.df)])
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=Temperature,group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(Conductivity),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=TurbidityFNU,group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(DissAmmonia),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(DissNitrateNitrite),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(DissOrthophos),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(DissSilica),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=log10(OUT),group=group))
+ggplot(data=env.df)+geom_boxplot(aes(x=group,y=monthly_grazing_rate,group=group))
+
+ggplot(env.df, aes(x=group, fill = Region)) +geom_bar(position="fill") 
+ggplot(env.df, aes(x=group, fill = as.factor(Month))) +geom_bar(position="fill") 
+ggplot(env.df, aes(x=group, fill = mvi_class)) +geom_bar(position="fill") 
+
+# Look at species composition in each cluster
+
+# 3. attach cluster membership (make sure names align!)
+biovol <- phyt %>% 
+  group_by(Date, Station, AlgalGroup) %>%
+  summarise(biovol = mean(biovol), .groups = "drop") %>%   # or first()/max() — see note
+  pivot_wider(names_from = AlgalGroup, values_from = biovol, values_fill = 0)
+
+biovol_df <- as.data.frame(biovol) %>%
+  rownames_to_column("sample") %>%
+  mutate(cluster = factor(grp[sample]))
+
+# 4. sum biovolume per genus within each cluster, then convert to % of cluster total
+cluster_comp <- biovol_df %>%
+  pivot_longer(-c(Date,Station,sample, cluster), names_to = "genus", values_to = "biovol") %>%
+  group_by(cluster, genus) %>%
+  summarise(total_biovol = sum(biovol,na.rm=TRUE), .groups = "drop") %>%
+  group_by(cluster) %>%
+  mutate(pct = total_biovol / sum(total_biovol,na.rm=TRUE) * 100) %>%   # % of pooled cluster biovolume
+  ungroup()
+
+library(forcats)
+top_genera <- cluster_comp %>%
+  group_by(genus) %>% summarise(m = max(pct,na.rm=TRUE)) %>%
+  slice_max(m, n = 20) %>% pull(genus)
+
+plot_df <- cluster_comp %>%
+  mutate(genus2 = fct_other(genus, keep = top_genera)) %>%
+  group_by(cluster, genus2) %>%
+  summarise(pct = sum(pct,na.rm=TRUE), .groups = "drop")
+
+p<-ggplot(plot_df, aes(cluster, pct, fill = genus2)) +
+  geom_col() +
+  scale_fill_viridis_d() +
+  labs(x = "Cluster", y = "% of pooled biovolume", fill = "Genus") +
+  theme_minimal()
+ggplotly(p)
+
+```
+
+## MVI divisions
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", !is.na(mvi_class)) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+# Figures
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=Temperature,group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(Conductivity),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=TurbidityFNU,group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissAmmonia),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissNitrateNitrite),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissOrthophos),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissSilica),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(OUT),group=mvi_class))
+ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=monthly_grazing_rate,group=mvi_class))
+
+ggplot(phyt, aes(x=mvi_class, fill = Region)) +geom_bar(position="fill") 
+ggplot(phyt, aes(x=mvi_class, fill = as.factor(Month))) +geom_bar(position="fill") 
+
+# Look at GENUS composition in each cluster
+
+# 3. attach cluster membership (make sure names align!)
+biovol <- phyt %>% 
+  group_by(Date, Region, Station, mvi_class,Genus) %>%
+  summarise(biovol = mean(biovol), .groups = "drop") %>%   # or first()/max() — see note
+  pivot_wider(names_from = Genus, values_from = biovol, values_fill = 0)
+
+biovol_df <- as.data.frame(biovol) %>%
+  rownames_to_column("sample")
+
+# 4. sum biovolume per genus within each cluster, then convert to % of cluster total
+cluster_comp <- biovol_df %>%
+  pivot_longer(-c(Date,Region,Station,sample, mvi_class), names_to = "genus", values_to = "biovol") %>%
+  group_by(Region,mvi_class, genus) %>%
+  summarise(total_biovol = sum(biovol,na.rm=TRUE), .groups = "drop") %>%
+  group_by(Region,mvi_class) %>%
+  mutate(pct = total_biovol / sum(total_biovol,na.rm=TRUE) * 100) %>%   # % of pooled cluster biovolume
+  ungroup()
+
+library(forcats)
+top_genera <- cluster_comp %>%
+  group_by(genus) %>% summarise(m = max(pct,na.rm=TRUE)) %>%
+  slice_max(m, n = 20) %>% pull(genus)
+
+plot_df <- cluster_comp %>%
+  mutate(genus2 = fct_other(genus, keep = top_genera)) %>%
+  group_by(Region,mvi_class, genus2) %>%
+  summarise(pct = sum(pct,na.rm=TRUE), .groups = "drop")
+
+p<-ggplot(plot_df, aes(mvi_class, pct, fill = genus2)) +
+  geom_col() +
+  scale_fill_viridis_d() +
+  labs(x = "Cluster", y = "% of pooled biovolume", fill = "Genus") +
+  facet_wrap(~Region)+
+  theme_minimal()
+ggplotly(p)
+
+# Look at ALGAL GROUP composition in each cluster
+
+# 3. attach cluster membership (make sure names align!)
+biovol <- phyt %>% 
+  group_by(Date, Region, Station, mvi_class,AlgalGroup) %>%
+  summarise(biovol = mean(biovol), .groups = "drop") %>%   # or first()/max() — see note
+  pivot_wider(names_from = AlgalGroup, values_from = biovol, values_fill = 0)
+
+biovol_df <- as.data.frame(biovol) %>%
+  rownames_to_column("sample")
+
+# 4. sum biovolume per genus within each cluster, then convert to % of cluster total
+cluster_comp <- biovol_df %>%
+  pivot_longer(-c(Date,Region,Station,sample, mvi_class), names_to = "algalgroup", values_to = "biovol") %>%
+  group_by(Region,mvi_class, algalgroup) %>%
+  summarise(total_biovol = sum(biovol,na.rm=TRUE), .groups = "drop") %>%
+  group_by(Region,mvi_class) %>%
+  mutate(pct = total_biovol / sum(total_biovol,na.rm=TRUE) * 100) %>%   # % of pooled cluster biovolume
+  ungroup()
+
+plot_df <- cluster_comp %>%
+  group_by(Region,mvi_class, algalgroup) %>%
+  summarise(pct = sum(pct,na.rm=TRUE), .groups = "drop")
+
+p<-ggplot(plot_df, aes(mvi_class, pct, fill = algalgroup)) +
+  geom_col() +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(13, "BrBG"))(13),name="Algal Group")+
+  labs(x = "Cluster", y = "% of pooled biovolume", fill = "Genus") +
+  facet_wrap(~Region)+
+  theme_minimal()
+ggplotly(p)
+
+
+
+
+
+library(dplyr)
+
+# Your desired group order (top-to-bottom in legend)
+group_levels <- c("Centric Diatoms", "Chrysophytes", "Cryptophytes",
+                  "Cyanobacteria", "Euglenoids", "Green Algae",
+                  "Pennate Diatoms", "Ciliates", "Dinoflagellates")
+
+# Named color vector: one color per group, in your order
+group_colors <- setNames(
+  colorRampPalette(brewer.pal(9, "BrBG"))(length(group_levels)),
+  group_levels
+)
+
+# Groups that reach >= 1% in at least one bar segment
+keep_groups <- plot_df %>%
+  filter(pct >= 1) %>%
+  pull(algalgroup) %>%
+  unique()
+
+# Keep desired ordering, restricted to survivors
+keep_ordered <- group_levels[group_levels %in% keep_groups]
+
+plot_df2 <- plot_df %>%
+  mutate(algalgroup = ifelse(algalgroup %in% keep_groups,
+                             as.character(algalgroup), NA),
+         algalgroup = factor(algalgroup, levels = group_levels))
+
+ggplot(plot_df2, aes(mvi_class, pct, fill = algalgroup)) +
+  geom_col(color="black") +
+  scale_fill_manual(
+    values = group_colors,     # named -> color is locked to the group
+    name = "Algal Group",
+    na.value = "grey80",
+    breaks = keep_ordered,      # legend order + which entries show
+    limits = group_levels       # keeps full mapping consistent
+  ) +
+  labs(x = "", y = "% of pooled biovolume") +
+  facet_wrap(~Region) +
+  theme_minimal()
+```

@@ -107,7 +107,7 @@ combined_df <- rbind(usgs, emp)
 # write clam data to csv
 ## Old - separated by species: 
 # write.csv(combined_df, "Data/combined_clams_dataset.csv")
-write.csv(combined_df, "Data/combined_clams_dataset2.csv")
+# write.csv(combined_df, "Data/combined_clams_dataset2.csv")
 
 #########################################################
 # COMBINE INTEGRATED DAY FLOW DATASET WITH CLAM DATASET #
@@ -226,40 +226,55 @@ wq <- left_join(integrated_df,dayflow,by=c("Year", "Month"))  %>%
 
 #seasonal lag
 
-#Step 1: summarize by season 
-wq_r_sum_lagseason <- wq %>%
-  group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
-  #summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
+# #Step 1: summarize by season 
+# wq_r_sum_lagseason <- wq %>%
+#   group_by(Regions,Year,season) %>%
+#   summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)))
+#   #summarize(across(DissAmmonia:OUT,\(x) mean(x, na.rm = TRUE)),across(SACmax_s:OUT_max_var_sm,\(x) mean(x, na.rm = TRUE))) 
+# 
+# #Step 2: Add a column for the following season.
+# #This seems counter-intuitive because the lag should be the prior season,
+# #but this is a merge column: it will merge back with the prior season
+# #in the original table. 
+# wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+#   rename_with(~paste0("lag",.x)) %>%
+#   rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
+#   mutate(lagseason = case_when(
+#     season == "Spring" ~ "Summer",
+#     season == "Summer" ~ "Autumn",
+#     season == "Autumn" ~ "Winter",
+#     season == "Winter" ~ "Spring" 
+#   )) %>%
+#   mutate(lagseasonyear = case_when(
+#     season == "Autumn" ~ Year+1,
+#     !(season == "Autumn") ~ Year
+#   )) %>%
+#   mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+#   ungroup %>%
+#   select(lagseasonyear,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
+#          lagDissNitrateNitrite,lagTemperature,lagTurbidityNTU,lagConductivity,
+#          lagSAC,lagOUT, lagSJR, lagDissOrthophos, lagIndex, lagSACmax_s:lagOUT_max_var_sm)
 
-#Step 2: Add a column for the following season.
-#This seems counter-intuitive because the lag should be the prior season,
-#but this is a merge column: it will merge back with the prior season
-#in the original table. 
-wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+# 9/2/2026 3-month lag
+
+wq_r_sum_lag3mo <- wq %>%
+  select(where(is.numeric),Regions) %>%
   rename_with(~paste0("lag",.x)) %>%
-  rename(Year = "lagYear",season = "lagseason",Regions="lagRegions") %>% 
-  mutate(lagseason = case_when(
-    season == "Spring" ~ "Summer",
-    season == "Summer" ~ "Autumn",
-    season == "Autumn" ~ "Winter",
-    season == "Winter" ~ "Spring" 
-  )) %>%
-  mutate(lagseasonyear = case_when(
-    season == "Autumn" ~ Year+1,
-    !(season == "Autumn") ~ Year
-  )) %>%
-  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  rename(Year = "lagYear", Month="lagMonth",Regions="lagRegions") %>%
+  mutate(lagMonth = case_when(Month > 9 ~ Month - 9,
+                              Month < 10 ~ Month + 3),
+         lagYear = case_when(Month > 10 ~ Year + 1,
+                             Month < 10 ~ Year),
+         lagyearmonth = paste0(lagYear,"_",lagMonth))%>%
   ungroup %>%
-  select(lagseasonyear,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
+  select(lagyearmonth,Regions,lagDissAmmonia,lagSecchi,lagTotPhos,
          lagDissNitrateNitrite,lagTemperature,lagTurbidityNTU,lagConductivity,
          lagSAC,lagOUT, lagSJR, lagDissOrthophos, lagIndex, lagSACmax_s:lagOUT_max_var_sm)
 
 #Step 3: Merge back with original dataset, retain all of the original dataset. 
-wq_r_sum_season <- wq %>% 
-  mutate(seasonyear = paste0(season,year(Date)))%>%
-  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>% 
-  select(-seasonyear)%>%
+wq_r_sum_month <- wq %>% 
+  mutate(yearmonth = paste0(Year,"_",Month))%>%
+  merge(wq_r_sum_lag3mo,by.x=c("Regions","yearmonth"),by.y=c("Regions","lagyearmonth"),all.x=T)%>%
   relocate(Date)
 
 l <- names(wq_r_sum_season)[-c(1:4, 56)]
@@ -270,4 +285,4 @@ wq_r_sum_season_long <- wq_r_sum_season %>% pivot_longer(l, names_to = "variable
 #write.csv(wq_r_sum_season, "Data/regional_integrated_dataset2.csv")                           
 #New
 #write.csv(wq_r_sum_season_long, "Data/regional_integrated_dataset_long.csv")   
-write.csv(wq_r_sum_season, "Data/regional_integrated_dataset3.csv")
+write.csv(wq_r_sum_month, "Data/regional_integrated_dataset4.csv")

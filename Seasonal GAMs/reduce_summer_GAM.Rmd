@@ -1,0 +1,276 @@
+---
+title:
+  "Reduce Summer GAMs"
+author:
+  "Ryan Hankins"
+output: 
+  rmdformats::html_clean:
+    lightbox: true
+    thumbnails: false
+---
+# Starting models:
+
+Summer Model 
+
+Model 1: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:Exports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+Model 2: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
+
+# Prepare Data {.tabset}
+
+```{r, include=FALSE}
+library(tidyverse)
+library(corrplot)
+library(DT)
+library(mgcv)
+library(tidyverse)
+library(marginaleffects)
+library(stats)
+library(mice)
+library(ggplot2)
+```
+
+
+
+```{r}
+
+# variables to include in the analysis:
+
+df <- read.csv("Data/regional_integrated_dataset3.csv" )
+
+df$Date = as.Date(df$Date)
+
+# 1979 is the start of the study period.
+df <- subset(df,df$Date >= "1979-01-01")
+# 2022 is the end of the study period
+df <- subset(df,df$Date <= "2022-12-31")
+
+# Changing categorical variables to factors
+# need to change regions to factor farther down so dataframe splitting by region works properly
+df$Regions = as.factor(df$Regions)
+df$season = as.factor(df$season)
+df$season_num = as.numeric(df$season)
+
+# log transforming chl-a to achieve normal distribution of response variable.
+df$logchla <- log(df$Chlorophyll)
+
+# log transforming some variables to better visualize
+df$logDissNitrateNitrite <- log(df$DissNitrateNitrite)
+df$logDissAmmonia <- log(df$DissAmmonia)
+df$logDissOrthophos <- log(df$DissOrthophos)
+df$logConductivity <- log(df$Conductivity)
+df$logSAC <- log(df$SAC)
+df$logOUT <- log(df$OUT)
+df$logSJR <- log(df$SJR)
+
+#Replacing clam variables with a step function (pre/post potamocorbula introduction to the Bay in 1987)
+df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
+df$clam_step <- as.factor(df$clam_step)
+df$Chlorophyll <- as.numeric(df$Chlorophyll)
+```
+
+## add lag terms
+```{r}
+# Create monthly lag terms
+df<- df %>% arrange(Year, Month) %>% mutate(across(c(DissAmmonia,logDissAmmonia,DissOrthophos,logDissOrthophos,DissNitrateNitrite,logDissNitrateNitrite,Temperature, Conductivity,logConductivity, SAC, logSAC, SJR, logSJR, EXPORT, OUT, logOUT),
+                                       ~ lag(.x, n = 1), 
+                                       .names = "lag{.col}_mo"))
+
+# Create seasonal lag terms for the log terms
+# This code is taken from clamdata_cleanup_AB_261125.R
+#Step 1: summarize by season 
+wq_r_sum_lagseason <- df %>%
+  group_by(Regions,Year,season) %>%
+  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+
+#Step 2: Add a column for the following season.
+#This seems counter-intuitive because the lag should be the prior season,
+#but this is a merge column: it will merge back with the prior season
+#in the original table. 
+wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+  rename_with(~paste0("lag",.x)) %>%
+  rename(Year = "lagYear",season = "lagseason", Regions="lagRegions") %>% 
+  mutate(lagseason = case_when(
+    season == "Spring" ~ "Summer",
+    season == "Summer" ~ "Autumn",
+    season == "Autumn" ~ "Winter",
+    season == "Winter" ~ "Spring" 
+  )) %>%
+  mutate(lagseasonyear = case_when(
+    season == "Autumn" ~ Year+1,
+    !(season == "Autumn") ~ Year
+  )) %>%
+  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+  ungroup %>% 
+  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite, laglogDissOrthophos, laglogConductivity,
+         laglogSAC,laglogOUT, laglogSJR, laglogDissOrthophos, lagEXPORT)
+
+
+df <- df %>% 
+  mutate(seasonyear = paste0(season,year(Date))) %>%
+  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+  select(-seasonyear)%>%
+  relocate(Date)
+
+```
+
+
+
+## make the final dataset
+
+```{r}
+c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC","lagSAC", "lagSAC_mo", "logSAC", "laglogSAC","laglogSAC_mo", "EXPORT", "lagEXPORT", "lagEXPORT_mo", "OUT","lagOUT","lagOUT_mo", "logOUT", "laglogOUT", "laglogOUT_mo", "SJR", "lagSJR","lagSJR_mo","logSJR", "laglogSJR", "laglogSJR_mo", "Index","lagIndex","DissAmmonia","lagDissAmmonia","lagDissAmmonia_mo","logDissAmmonia","laglogDissAmmonia","laglogDissAmmonia_mo","DissOrthophos","lagDissOrthophos","logDissOrthophos","laglogDissOrthophos","laglogDissOrthophos_mo","DissNitrateNitrite","lagDissNitrateNitrite","logDissNitrateNitrite","laglogDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature","lagTemperature_mo","Conductivity",  "lagConductivity","lagConductivity_mo","logConductivity","laglogConductivity_mo","clam_step")
+
+
+smr <- df %>% filter(season == "Summer")%>%subset(select=c)
+```
+
+
+# Reduce Summer Model
+
+## smr.1.test {.tabset}
+We are using the complete cases data set here.
+
+Model 1: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:Exports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)
+
+```{r cache = TRUE}
+smr.1.test <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + s(logSAC, by=Regions) + s(logSJR, by=Regions) + s(EXPORT, by=Regions) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=smr, method = 'ML', select=TRUE)
+```
+### summary 
+
+```{r}
+summary(smr.1.test)
+```
+
+
+### GAM Check
+```{r}
+gam.check(smr.1.test)
+```
+LogDissOrthophos, Index, lagIndex, laglogDissNitrateNitrite_mo, Month
+
+### Plot Predictions
+
+```{r}
+c = c("logDissAmmonia","laglogDissAmmonia_mo","logDissOrthophos","laglogDissOrthophos_mo","logDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature_mo","laglogConductivity_mo","clam_step", "Month")
+lapply(c, function(x) {
+  plot_predictions(smr.1.test, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+Terms with regional interactions:
+
+```{r}
+c = c("logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_mo", "Index","lagIndex","logConductivity")
+lapply(c, function(x) {
+    plot_predictions(smr.1.test, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+## smr.2.test {.tabset}
+
+Model 2: Summer Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month) 
+
+```{r cache=TRUE}
+
+smr.2.test <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=smr, method = 'ML', select=TRUE)
+```
+
+### summary 
+
+```{r}
+summary(smr.2.test)
+```
+
+### GAM Check
+```{r}
+gam.check(smr.2.test)
+```
+logDissAmmonia
+
+### Plot predicitons
+
+```{r}
+c = c( "logDissAmmonia","laglogDissAmmonia","logDissOrthophos","laglogDissOrthophos_mo","logDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature_mo","laglogConductivity_mo","clam_step", "Month")
+lapply(c, function(x) {
+  plot_predictions(smr.2.test, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+Terms with regional interactions:
+
+```{r}
+c = c("logOUT",  "laglogOUT_mo", "Index","lagIndex","logConductivity")
+lapply(c, function(x) {
+    plot_predictions(smr.1.test, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+## AIC/BIC
+notes: smr_1_test performs better based on both AIC and BIC
+
+AIC
+```{r}
+AIC(smr.1.test,smr.2.test)
+```
+BIC
+```{r}
+BIC(smr.1.test, smr.2.test)
+```
+
+# Run reduced summer models
+
+
+## smr.1 {.tabset}
+
+running smr.1 without LogDissOrthophos, Index, lagIndex, laglogDissNitrateNitrite_mo
+retaining Month random effect
+
+```{r cache = TRUE}
+smr.1 <- gam(logchla ~ s(logDissAmmonia) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(logSAC, by=Regions) + s(logSJR, by=Regions) + s(EXPORT, by=Regions) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(Month, bs="re"), data=smr, method = 'ML', select=TRUE)
+```
+
+
+### GAM Check
+```{r}
+gam.check(smr.1)
+```
+### Summary
+```{r}
+summary(smr.1)
+```
+
+## smr.2 {.tabset}
+
+running smr.2 without logDissAmmonia
+
+```{r cache = TRUE}
+
+
+smr.2 <- gam(logchla ~ s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=smr, method = 'ML', select=TRUE)
+```
+
+### GAM Check
+```{r}
+gam.check(smr.2)
+```
+
+### Summary
+```{r}
+summary(smr.2)
+```
+
+## Compare AIC/BIC of all summer models 
+
+```{r}
+AIC(smr.1.test,smr.1,smr.2.test, smr.2)
+```
+
+```{r}
+BIC(smr.1.test,smr.1,smr.2.test, smr.2)
+```
+
