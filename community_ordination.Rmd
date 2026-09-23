@@ -9,6 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+Change unknown genus to register the class or taxa resolution like I did for CFL
+
+
 ## Load data
 ```{r, warning=FALSE, message=FALSE}
 
@@ -35,7 +38,7 @@ pesp <- read.csv("Data/PESP_enumeration.csv") %>%
 
 sum_na <- function(x) ifelse(all(is.na(x)), NA_real_, sum(x, na.rm = TRUE))
 
-pesp1 <- pesp %>%
+pesp1 <- pesp %>% mutate(Genus = if_else(Genus == "Unknown", Taxon, Genus)) %>%
   group_by(Survey,Date,Station,Latitude,Longitude,SampleMethod,SampleDepth,DepthType,Lab,
            CountMethodSample,CountMethodTaxa,Magnification,AlgalGroup,Genus) %>%
   summarize(Cells_per_mL = sum_na(Cells_per_mL),
@@ -1215,7 +1218,109 @@ ggplotly(p)
 
 ```
 
-## MVI divisions
+## Average algal group per classification, region, and season
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", !is.na(mvi_class),
+         Region %in% c("Confluence","Central")) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+# --- Step 1: collapse genera -> AlgalGroup within each unique SAMPLE ---
+# Define a sample explicitly. Adjust these ID columns to whatever uniquely
+# identifies one observation in YOUR data (Date + Station is typical).
+sample_id_cols <- c("Region","Season","mvi_class","Date","Station")
+
+sample_comp <- phyt %>%
+  group_by(across(all_of(c(sample_id_cols, "AlgalGroup")))) %>%
+  summarise(biovol = sum(biovol, na.rm = TRUE), .groups = "drop")
+
+# --- Step 2: proportions within each sample ---
+sample_comp <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  mutate(prop = biovol / sum(biovol, na.rm = TRUE)) %>%
+  ungroup()
+
+# --- CHECK: every sample must sum to 1.0 ---
+check <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  summarise(total = sum(prop), .groups = "drop")
+cat("Proportion sums per sample — should all be 1.0:\n")
+print(summary(check$total))
+if (any(abs(check$total - 1) > 1e-6)) {
+  cat("\n!! Some samples don't sum to 1 — sample IDs aren't unique.\n")
+  cat("Rows per supposed-unique sample (should be <= n AlgalGroups):\n")
+  print(sample_comp %>% count(across(all_of(sample_id_cols))) %>%
+          arrange(desc(n)) %>% head())
+}
+
+# --- Step 3: FILL IN ZEROS so every AlgalGroup exists in every sample, then average ---
+sample_comp_full <- sample_comp %>%
+  select(all_of(sample_id_cols), AlgalGroup, prop) %>%
+  complete(nesting(!!!syms(sample_id_cols)), AlgalGroup,
+           fill = list(prop = 0))          # absent group in a sample = 0%
+
+comp <- sample_comp_full %>%
+  group_by(Region, Season, mvi_class, AlgalGroup) %>%
+  summarise(mean_prop = mean(prop, na.rm = TRUE), .groups = "drop")
+
+# --- CHECK: bars should now sum to ~1.0 ---
+cat("\nBar totals — should all be ~1.0 now:\n")
+print(comp %>% group_by(Region, Season, mvi_class) %>%
+        summarise(bar_total = sum(mean_prop), .groups = "drop") %>%
+        pull(bar_total) %>% summary())
+
+# --- Order factors ---
+comp$Season    <- factor(comp$Season, levels = c("Winter","Spring","Summer","Autumn"))
+comp$mvi_class <- factor(comp$mvi_class, levels = c("No bloom","BAB","HAB"))
+
+# --- Identify AlgalGroups that exceed 1% in AT LEAST ONE bar (cell) ---
+keep_groups <- comp %>%
+  filter(mean_prop > 0.05) %>%
+  distinct(AlgalGroup) %>%
+  pull(AlgalGroup)
+
+# --- Lump the rest into "Other", then re-sum so each bar still totals 100% ---
+comp_plot <- comp %>%
+  mutate(AlgalGroup = ifelse(AlgalGroup %in% keep_groups,
+                             as.character(AlgalGroup), "Other")) %>%
+  group_by(Region, Season, mvi_class, AlgalGroup) %>%
+  summarise(mean_prop = sum(mean_prop), .groups = "drop")
+
+unique(comp_plot$AlgalGroup)
+
+# --- Plot ---
+comp_plot$AlgalGroup <- factor(comp_plot$AlgalGroup,
+  levels = c("Other", "Cryptophytes",
+              "Euglenoids", "Cyanobacteria","Chrysophytes", "Green Algae",
+             "Pennate Diatoms", "Centric Diatoms"))
+
+p<-ggplot(comp_plot, aes(x = Season, y = mean_prop, fill = AlgalGroup)) +
+  geom_col(position = "stack", width = 0.8, color="black") +
+  scale_fill_manual(values=colorRampPalette(brewer.pal(8, "BrBG"))(8))+
+  facet_grid(Region ~ mvi_class) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0, 0),
+                     limits = c(0, 1)) +
+  labs(x = "", y = "Mean relative biovolume",
+       fill = "Algal group") +
+  theme_bw(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major.x = element_blank(),panel.grid.major.y = element_blank(),
+        panel.grid.minor.x = element_blank(),panel.grid.minor.y = element_blank(),
+        panel.spacing.y = unit(1, "lines"),legend.position = "bottom")
+
+ggplotly(p)
+
+jpeg("Figures/AlgalGroup_season_region.jpg", units="in", width=6, height=5, res=300)
+p
+dev.off()
+
+```
+
+## Average genera per classification, region, and season
 ```{r, warning=FALSE, message=FALSE}
 
 # Format data
@@ -1225,131 +1330,274 @@ phyt <- dat %>%
          DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup,Genus) %>%
   summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
 
-# Figures
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=Temperature,group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(Conductivity),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=TurbidityFNU,group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissAmmonia),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissNitrateNitrite),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissOrthophos),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(DissSilica),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=log10(OUT),group=mvi_class))
-ggplot(data=phyt)+geom_boxplot(aes(x=mvi_class,y=monthly_grazing_rate,group=mvi_class))
+# --- Step 1: total biovolume per SAMPLE per GENUS ---
+sample_id_cols <- c("Region","Season","mvi_class","Date","Station")
+sample_comp <- phyt %>%
+  group_by(across(all_of(c(sample_id_cols, "Genus")))) %>%
+  summarise(biovol = sum(biovol, na.rm = TRUE), .groups = "drop")
 
-ggplot(phyt, aes(x=mvi_class, fill = Region)) +geom_bar(position="fill") 
-ggplot(phyt, aes(x=mvi_class, fill = as.factor(Month))) +geom_bar(position="fill") 
-
-# Look at GENUS composition in each cluster
-
-# 3. attach cluster membership (make sure names align!)
-biovol <- phyt %>% 
-  group_by(Date, Region, Station, mvi_class,Genus) %>%
-  summarise(biovol = mean(biovol), .groups = "drop") %>%   # or first()/max() — see note
-  pivot_wider(names_from = Genus, values_from = biovol, values_fill = 0)
-
-biovol_df <- as.data.frame(biovol) %>%
-  rownames_to_column("sample")
-
-# 4. sum biovolume per genus within each cluster, then convert to % of cluster total
-cluster_comp <- biovol_df %>%
-  pivot_longer(-c(Date,Region,Station,sample, mvi_class), names_to = "genus", values_to = "biovol") %>%
-  group_by(Region,mvi_class, genus) %>%
-  summarise(total_biovol = sum(biovol,na.rm=TRUE), .groups = "drop") %>%
-  group_by(Region,mvi_class) %>%
-  mutate(pct = total_biovol / sum(total_biovol,na.rm=TRUE) * 100) %>%   # % of pooled cluster biovolume
+# --- Step 2: proportions within each sample ---
+sample_comp <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  mutate(prop = biovol / sum(biovol, na.rm = TRUE)) %>%
   ungroup()
 
-library(forcats)
-top_genera <- cluster_comp %>%
-  group_by(genus) %>% summarise(m = max(pct,na.rm=TRUE)) %>%
-  slice_max(m, n = 20) %>% pull(genus)
+# --- CHECK: every sample sums to 1 ---
+check <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  summarise(total = sum(prop), .groups = "drop")
+cat("Per-sample sums (should be 1):\n"); print(summary(check$total))
 
-plot_df <- cluster_comp %>%
-  mutate(genus2 = fct_other(genus, keep = top_genera)) %>%
-  group_by(Region,mvi_class, genus2) %>%
-  summarise(pct = sum(pct,na.rm=TRUE), .groups = "drop")
+# --- Step 3: fill zeros, then average across samples ---
+sample_comp_full <- sample_comp %>%
+  select(all_of(sample_id_cols), Genus, prop) %>%
+  complete(nesting(!!!syms(sample_id_cols)), Genus, fill = list(prop = 0))
 
-p<-ggplot(plot_df, aes(mvi_class, pct, fill = genus2)) +
-  geom_col() +
-  scale_fill_viridis_d() +
-  labs(x = "Cluster", y = "% of pooled biovolume", fill = "Genus") +
-  facet_wrap(~Region)+
-  theme_minimal()
+comp <- sample_comp_full %>%
+  group_by(Region, Season, mvi_class, Genus) %>%
+  summarise(mean_prop = mean(prop, na.rm = TRUE), .groups = "drop")
+
+cat("\nBar totals (should be ~1):\n")
+print(comp %>% group_by(Region, Season, mvi_class) %>%
+        summarise(t = sum(mean_prop), .groups = "drop") %>% pull(t) %>% summary())
+
+# --- Order facet factors ---
+comp$Season    <- factor(comp$Season, levels = c("Winter","Spring","Summer","Autumn"))
+comp$mvi_class <- factor(comp$mvi_class, levels = c("No bloom","BAB","HAB"))
+
+# --- Keep genera exceeding 5% in AT LEAST ONE bar; lump rest into "Other" ---
+keep_genera <- comp %>%
+  filter(mean_prop > 0.1) %>%
+  distinct(Genus) %>%
+  pull(Genus)
+
+comp_plot <- comp %>%
+  mutate(Genus = ifelse(Genus %in% keep_genera, as.character(Genus), "Other")) %>%
+  group_by(Region, Season, mvi_class, Genus) %>%
+  summarise(mean_prop = sum(mean_prop), .groups = "drop")
+
+cat("\nGenera kept:", length(keep_genera),
+    "of", n_distinct(comp$Genus), "\n")
+print(sort(keep_genera))
+
+# --- Factor order: "Other" first (stacks on top), rest ordered by abundance ---
+# order surviving genera by overall mean so the legend is sensible
+genus_order <- comp_plot %>%
+  filter(Genus != "Other") %>%
+  group_by(Genus) %>%
+  summarise(m = mean(mean_prop), .groups = "drop") %>%
+  arrange(m) %>%           # ascending -> most abundant ends up at bottom of stack
+  pull(Genus)
+
+comp_plot$Genus <- factor(comp_plot$Genus, levels = c("Other", genus_order))
+
+# --- Palette sized to the actual number of categories ---
+n_grp <- nlevels(comp_plot$Genus)
+pal <- setNames(colorRampPalette(brewer.pal(8, "BrBG"))(n_grp),
+                levels(comp_plot$Genus))
+pal["Other"] <- "grey70"          # neutral grey for the catch-all
+
+# --- Plot ---
+p<-ggplot(comp_plot, aes(x = Season, y = mean_prop, fill = Genus)) +
+  geom_col(position = "stack", width = 0.8, color = "black") +
+  scale_fill_manual(values = pal) +
+  facet_grid(Region ~ mvi_class) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0, 0),
+                     limits = c(0, 1)) +
+  labs(x = "Season", y = "Mean relative biovolume",
+       fill = "Genus",
+       title = "Average phytoplankton composition by bloom class, region, and season") +
+  theme_bw(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major.x = element_blank(), panel.grid.major.y = element_blank(),
+        panel.grid.minor.x = element_blank(), panel.grid.minor.y = element_blank())
+
 ggplotly(p)
 
-# Look at ALGAL GROUP composition in each cluster
-
-# 3. attach cluster membership (make sure names align!)
-biovol <- phyt %>% 
-  group_by(Date, Region, Station, mvi_class,AlgalGroup) %>%
-  summarise(biovol = mean(biovol), .groups = "drop") %>%   # or first()/max() — see note
-  pivot_wider(names_from = AlgalGroup, values_from = biovol, values_fill = 0)
-
-biovol_df <- as.data.frame(biovol) %>%
-  rownames_to_column("sample")
-
-# 4. sum biovolume per genus within each cluster, then convert to % of cluster total
-cluster_comp <- biovol_df %>%
-  pivot_longer(-c(Date,Region,Station,sample, mvi_class), names_to = "algalgroup", values_to = "biovol") %>%
-  group_by(Region,mvi_class, algalgroup) %>%
-  summarise(total_biovol = sum(biovol,na.rm=TRUE), .groups = "drop") %>%
-  group_by(Region,mvi_class) %>%
-  mutate(pct = total_biovol / sum(total_biovol,na.rm=TRUE) * 100) %>%   # % of pooled cluster biovolume
-  ungroup()
-
-plot_df <- cluster_comp %>%
-  group_by(Region,mvi_class, algalgroup) %>%
-  summarise(pct = sum(pct,na.rm=TRUE), .groups = "drop")
-
-p<-ggplot(plot_df, aes(mvi_class, pct, fill = algalgroup)) +
-  geom_col() +
-  scale_fill_manual(values = colorRampPalette(brewer.pal(13, "BrBG"))(13),name="Algal Group")+
-  labs(x = "Cluster", y = "% of pooled biovolume", fill = "Genus") +
-  facet_wrap(~Region)+
-  theme_minimal()
-ggplotly(p)
-
-
-
-
-
-library(dplyr)
-
-# Your desired group order (top-to-bottom in legend)
-group_levels <- c("Centric Diatoms", "Chrysophytes", "Cryptophytes",
-                  "Cyanobacteria", "Euglenoids", "Green Algae",
-                  "Pennate Diatoms", "Ciliates", "Dinoflagellates")
-
-# Named color vector: one color per group, in your order
-group_colors <- setNames(
-  colorRampPalette(brewer.pal(9, "BrBG"))(length(group_levels)),
-  group_levels
-)
-
-# Groups that reach >= 1% in at least one bar segment
-keep_groups <- plot_df %>%
-  filter(pct >= 1) %>%
-  pull(algalgroup) %>%
-  unique()
-
-# Keep desired ordering, restricted to survivors
-keep_ordered <- group_levels[group_levels %in% keep_groups]
-
-plot_df2 <- plot_df %>%
-  mutate(algalgroup = ifelse(algalgroup %in% keep_groups,
-                             as.character(algalgroup), NA),
-         algalgroup = factor(algalgroup, levels = group_levels))
-
-ggplot(plot_df2, aes(mvi_class, pct, fill = algalgroup)) +
-  geom_col(color="black") +
-  scale_fill_manual(
-    values = group_colors,     # named -> color is locked to the group
-    name = "Algal Group",
-    na.value = "grey80",
-    breaks = keep_ordered,      # legend order + which entries show
-    limits = group_levels       # keeps full mapping consistent
-  ) +
-  labs(x = "", y = "% of pooled biovolume") +
-  facet_wrap(~Region) +
-  theme_minimal()
 ```
+
+## Top 5 genera for each classification, region, and season
+```{r, warning=FALSE, message=FALSE}
+
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", !is.na(mvi_class), 
+         Region %in% c("Confluence","Central")) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,Chlorophyll,
+           DissolvedOxygen,pH,DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,
+           monthly_biomass,AlgalGroup,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+# --- 1. Top 5 genera per cell, combined into ONE cell ---
+genus_group <- phyt %>% distinct(Genus, AlgalGroup)
+
+top_genera <- comp %>%
+  left_join(genus_group, by = "Genus") %>%
+  group_by(Region, Season, mvi_class) %>%
+  slice_max(mean_prop, n = 5, with_ties = FALSE) %>%
+  arrange(Region, Season, mvi_class, desc(mean_prop)) %>%
+  mutate(entry = paste0(Genus, " [", AlgalGroup, "] (",
+                        round(mean_prop * 100, 1), "%)")) %>%
+  summarise(`Top Genera` = paste(entry, collapse = "\r\n"), .groups = "drop")
+
+# --- 2. Environmental means per cell (per-sample first, then averaged) ---
+env_vars <- c("Temperature","Conductivity","TurbidityFNU",
+              "DissAmmonia","Chlorophyll","OUT","monthly_biomass")
+env_means <- phyt %>%
+  distinct(across(all_of(c(sample_id_cols, env_vars)))) %>%
+  group_by(Region, Season, mvi_class) %>%
+  summarise(across(all_of(env_vars), ~ round(mean(.x, na.rm = TRUE), 2)),
+            .groups = "drop")
+
+# --- 3. Sample sizes ---
+n_samples <- phyt %>%
+  distinct(across(all_of(sample_id_cols))) %>%
+  count(Region, Season, mvi_class, name = "N")
+
+# --- 4. Join, rename, and order columns exactly as requested ---
+final_table <- top_genera %>%
+  left_join(n_samples, by = c("Region","Season","mvi_class")) %>%
+  left_join(env_means, by = c("Region","Season","mvi_class")) %>%
+  rename(
+    `Bloom Classification` = mvi_class,
+    `Mean Temperature`     = Temperature,
+    `Mean Conductivity`    = Conductivity,
+    `Mean Turbidity`       = TurbidityFNU,
+    `Mean Ammonium`        = DissAmmonia,
+    `Mean Chlorophyll`     = Chlorophyll,
+    `Mean Outflow`         = OUT,
+    `Mean Clam Biomass`    = monthly_biomass
+  ) %>%
+  select(Region, Season, `Bloom Classification`, `Top Genera`, N,
+         `Mean Temperature`, `Mean Conductivity`, `Mean Turbidity`,
+         `Mean Ammonium`, `Mean Chlorophyll`, `Mean Outflow`,
+         `Mean Clam Biomass`) %>%
+  arrange(Region, Season, `Bloom Classification`)
+
+print(final_table, n = Inf, width = Inf)
+write.csv(final_table, "Figures/top5_genera_env_by_cell.csv", row.names = FALSE)
+
+test <- phyt %>% group_by(mvi_class,Region) %>%
+  summarize(Chl = mean(Chlorophyll))
+
+
+
+```
+
+
+
+## Top 5 genera for each classification and region
+```{r, warning=FALSE, message=FALSE}
+
+# Format data
+phyt <- dat %>% 
+  filter(Year >= 2014, !is.na(Biovolume_per_mL), Survey == "DWR-EMP", !is.na(mvi_class),
+         Region %in% c("Confluence","Central")) %>%
+  group_by(Year,Season,Month,Date,Region,Station,mvi_class,Temperature,Conductivity,Secchi,TurbidityFNU,DissolvedOxygen,pH,Chlorophyll,monthly_biomass,
+         DissAmmonia,DissNitrateNitrite,TotPhos,DissOrthophos,DissSilica,OUT,monthly_grazing_rate,AlgalGroup,Genus) %>%
+  summarise(biovol = sum(Biovolume_per_mL, na.rm = TRUE),.groups = "drop") 
+
+# --- Step 1: total biovolume per SAMPLE per GENUS ---
+sample_id_cols <- c("Region","mvi_class","Date","Station")
+sample_comp <- phyt %>%
+  group_by(across(all_of(c(sample_id_cols, "Genus")))) %>%
+  summarise(biovol = sum(biovol, na.rm = TRUE), .groups = "drop")
+
+# --- Step 2: proportions within each sample ---
+sample_comp <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  mutate(prop = biovol / sum(biovol, na.rm = TRUE)) %>%
+  ungroup()
+
+# --- CHECK: every sample sums to 1 ---
+check <- sample_comp %>%
+  group_by(across(all_of(sample_id_cols))) %>%
+  summarise(total = sum(prop), .groups = "drop")
+cat("Per-sample sums (should be 1):\n"); print(summary(check$total))
+
+# --- Step 3: fill zeros, then average across samples ---
+sample_comp_full <- sample_comp %>%
+  select(all_of(sample_id_cols), Genus, prop) %>%
+  complete(nesting(!!!syms(sample_id_cols)), Genus, fill = list(prop = 0))
+
+comp <- sample_comp_full %>%
+  group_by(Region, mvi_class, Genus) %>%
+  summarise(mean_prop = mean(prop, na.rm = TRUE), .groups = "drop")
+
+cat("\nBar totals (should be ~1):\n")
+print(comp %>% group_by(Region, mvi_class) %>%
+        summarise(t = sum(mean_prop), .groups = "drop") %>% pull(t) %>% summary())
+
+# --- 1. Top 5 genera per cell, combined into ONE cell ---
+genus_group <- phyt %>% distinct(Genus, AlgalGroup)
+
+top_genera <- comp %>%
+  left_join(genus_group, by = "Genus") %>%
+  group_by(Region, mvi_class) %>%
+  slice_max(mean_prop, n = 5, with_ties = FALSE) %>%
+  arrange(Region, mvi_class, desc(mean_prop)) %>%
+  mutate(entry = paste0(Genus, " [", AlgalGroup, "] (",
+                        round(mean_prop * 100, 1), "%)")) %>%
+  summarise(`Top Genera` = paste(entry, collapse = "\r\n"), .groups = "drop")
+
+# --- 2. Environmental means per cell (per-sample first, then averaged) ---
+env_vars <- c("Temperature","Conductivity","TurbidityFNU",
+              "DissAmmonia","Chlorophyll","OUT","monthly_biomass")
+env_means <- phyt %>%
+  distinct(across(all_of(c(sample_id_cols, env_vars)))) %>%
+  group_by(Region, mvi_class) %>%
+  summarise(across(all_of(env_vars), ~ round(mean(.x, na.rm = TRUE), 2)),
+            .groups = "drop")
+
+# --- 3. Sample sizes ---
+n_samples <- phyt %>%
+  distinct(across(all_of(sample_id_cols))) %>%
+  count(Region, mvi_class, name = "N")
+
+# --- 4. Join, rename, and order columns exactly as requested ---
+final_table <- top_genera %>%
+  left_join(n_samples, by = c("Region","mvi_class")) %>%
+  left_join(env_means, by = c("Region","mvi_class")) %>%
+  rename(
+    `Bloom Classification` = mvi_class,
+    `Mean Temperature`     = Temperature,
+    `Mean Conductivity`    = Conductivity,
+    `Mean Turbidity`       = TurbidityFNU,
+    `Mean Ammonium`        = DissAmmonia,
+    `Mean Chlorophyll`     = Chlorophyll,
+    `Mean Outflow`         = OUT,
+    `Mean Clam Biomass`    = monthly_biomass
+  ) %>%
+  select(Region, `Bloom Classification`, `Top Genera`, N,
+         `Mean Temperature`, `Mean Conductivity`, `Mean Turbidity`,
+         `Mean Ammonium`, `Mean Chlorophyll`, `Mean Outflow`,
+         `Mean Clam Biomass`) %>%
+  arrange(Region, `Bloom Classification`)
+
+print(final_table, n = Inf, width = Inf)
+write.csv(final_table, "Figures/top5_genera_env_by_cell_region.csv", row.names = FALSE)
+
+```
+
+## Chl timeseries plot
+```{r, warning=FALSE, message=FALSE}
+
+x <- read.csv("Data/regional_integrated_dataset4.csv")
+
+x$Date <- as.Date(x$Date)
+
+x <- x %>% filter(!Regions=="Central") %>%
+  mutate(Regions = factor(Regions, levels = c("North Delta","South",
+                                              "Confluence","Suisun Bay"))) %>% 
+  mutate(Regions = fct_recode(Regions,"South Delta" = "South"))
+
+ggplot(data=x)+
+  geom_line(aes(x=Date,y=Chlorophyll),color="darkgreen",linewidth=0.7)+
+  facet_wrap(~Regions,scales="free_y")+
+  theme_light(base_size = 16) + xlab("") + ylab("Chlorophyll (µg/L)") +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "black"),
+        strip.text = element_text(size = 12)) + 
+  xlim(as.Date("1975-01-01"),as.Date("2023-01-01"))
+
+```
+

@@ -1,0 +1,151 @@
+"Region","Season","Bloom Classification","Top Genera","N","Mean Temperature","Mean Conductivity","Mean Turbidity","Mean Ammonium","Mean Chlorophyll","Mean Outflow","Mean Clam Biomass"
+"Central","Autumn","BAB","Aulacoseira [Centric Diatoms] (44.7%)
+Unknown cryptophyte [Cryptophytes] (14.2%)
+Pleurosira [Centric Diatoms] (13.7%)
+Pseudanabaena [Cyanobacteria] (4.9%)
+Plagioselmis [Cryptophytes] (4.7%)",3,12.66,695.67,4.9,0.03,7.31,6384.67,0.87
+"Central","Autumn","HAB","Plagioselmis [Cryptophytes] (19.2%)
+Chroococcus [Cyanobacteria] (12.3%)
+Unknown cyanobacterium [Cyanobacteria] (9.5%)
+Teleaulax [Cryptophytes] (8.3%)
+Cryptomonas [Cryptophytes] (6.7%)",10,19.4,516.3,2.74,0.03,2.61,6518.6,1.24
+"Central","Autumn","No bloom","Plagioselmis [Cryptophytes] (26%)
+Cocconeis [Pennate Diatoms] (9.5%)
+Cryptomonas [Cryptophytes] (8.9%)
+Aulacoseira [Centric Diatoms] (5.9%)
+Melosira [Centric Diatoms] (3.8%)",99,15.38,439.35,3.43,0.06,1.7,6833.92,2.02
+"Central","Spring","BAB","Aulacoseira [Centric Diatoms] (47.2%)
+Plagioselmis [Cryptophytes] (16.5%)
+Cryptomonas [Cryptophytes] (16%)
+Dolichospermum [Cyanobacteria] (4.9%)
+Cyclotella [Centric Diatoms] (3.3%)",2,20.65,222,10.9,0.02,28.03,21480.5,4.42
+"Central","Spring","HAB","Plagioselmis [Cryptophytes] (25.5%)
+Cryptomonas [Cryptophytes] (13.2%)
+Gyrosigma [Pennate Diatoms] (12.3%)
+Cyclotella [Centric Diatoms] (11.6%)
+Cocconeis [Pennate Diatoms] (6.4%)",6,23.9,450,3.1,0.04,3.22,5112.17,3.63
+"Central","Spring","No bloom","Plagioselmis [Cryptophytes] (12.8%)
+Eucapsis [Cyanobacteria] (9.1%)
+Cryptomonas [Cryptophytes] (8.5%)
+Cocconeis [Pennate Diatoms] (8.1%)
+Cyclotella [Centric Diatoms] (6.5%)",85,19.53,292.3,5.36,0.04,2.52,35628.69,3.18
+"Central","Summer","BAB","Unknown cryptophyte [Cryptophytes] (16.8%)
+Aulacoseira [Centric Diatoms] (15.6%)
+Cyclotella [Centric Diatoms] (8.1%)
+Unknown euglenoid [Euglenoids] (7.5%)
+Plagioselmis [Cryptophytes] (5.9%)",11,25.06,234.64,5.81,0.04,15.06,7672.27,3.61
+"Central","Summer","HAB","Chroococcus [Cyanobacteria] (12.4%)
+Aphanizomenon [Cyanobacteria] (10.3%)
+Unknown cyanobacterium [Cyanobacteria] (8.3%)
+Aulacoseira [Centric Diatoms] (7.4%)
+Plagioselmis [Cryptophytes] (6.6%)",44,24.92,437.5,3.92,0.03,5.26,6149.57,2.02
+"Central","Summer","No bloom","Aulacoseira [Centric Diatoms] (10.7%)
+Plagioselmis [Cryptophytes] (10.1%)
+Unknown centric diatom [Centric Diatoms] (6.4%)
+Cocconeis [Pennate Diatoms] (6.1%)
+Cryptomonas [Cryptophytes] (5.5%)",54,24.92,306.45,4.97,0.03,3.09,6818.37,4.36
+"Central","Winter","BAB","Cyclotella [Centric Diatoms] (38.8%)
+Unknown pennate diatom [Pennate Diatoms] (21.3%)
+Cryptomonas [Cryptophytes] (15.4%)
+Unknown centric diatom [Centric Diatoms] (10.7%)
+Fragilaria [Pennate Diatoms] (4.9%)",1,13.83,201,30.1,0.39,6.01,148138,4.89
+"Central","Winter","No bloom","Plagioselmis [Cryptophytes] (16.4%)
+Cocconeis [Pennate Diatoms] (9.9%)
+Eucapsis [Cyanobacteria] (9.7%)
+Cryptomonas [Cryptophytes] (8.6%)
+Cyclotella [Centric Diatoms] (7.2%)",95,11.58,434.21,9.12,0.1,1.58,44503.22,2.51
+"Confluence","Autumn","BAB","Aulacoseira [Centric Diatoms] (75.9%)
+Entomoneis [Pennate Diatoms] (20.5%)
+Cocconeis [Pennate Diatoms] (1.5%)
+Aphanizomenon [Cyanobacteria] (0.9%)
+Plagioselmis [Cryptophytes] (0.9%)",3,11.03,1248.67,10.43,0.08,14.99,4984.67,6.54
+"Confluence","Autumn","HAB","Plagioselmis [Cryptophytes] (24.6%)
+Unknown cyanobacterium [Cyanobacteria] (11.3%)
+Eucapsis [Cyanobacteria] (10.4%)
+Teleaulax [Cryptophytes] (8.4%)
+Aulacoseira [Centric Diatoms] (6.6%)",14,20.02,1794.93,3.79,0.04,2.6,4498.5,10.61
+"Confluence","Autumn","No bloom","Plagioselmis [Cryptophytes] (16.6%)
+Entomoneis [Pennate Diatoms] (10%)
+Eucapsis [Cyanobacteria] (10%)
+Cocconeis [Pennate Diatoms] (6.3%)
+Cyclotella [Centric Diatoms] (6%)",220,14.92,2045.85,9.14,0.09,1.59,7385.02,13.16
+"Confluence","Spring","BAB","Aulacoseira [Centric Diatoms] (53.7%)
+Unknown centric diatom [Centric Diatoms] (9.4%)
+Actinocyclus [Centric Diatoms] (8%)
+Entomoneis [Pennate Diatoms] (8%)
+Unknown pennate diatom [Pennate Diatoms] (4.9%)",6,18.24,1103.5,25.72,0.05,35.98,10604,13.03
+"Confluence","Spring","HAB","Dolichospermum [Cyanobacteria] (29.5%)
+Pseudostaurosira [Pennate Diatoms] (12.8%)
+Cocconeis [Pennate Diatoms] (11.4%)
+Eucapsis [Cyanobacteria] (8.4%)
+Nitzschia [Pennate Diatoms] (6.7%)",3,22.04,248.67,3.77,0.01,1.63,6766.67,18.75
+"Confluence","Spring","No bloom","Eucapsis [Cyanobacteria] (14.9%)
+Plagioselmis [Cryptophytes] (12.2%)
+Cocconeis [Pennate Diatoms] (7.7%)
+Cyclotella [Centric Diatoms] (7.1%)
+Unknown centric diatom [Centric Diatoms] (6.6%)",153,18.56,975.05,8.88,0.05,2.19,30633.35,11.16
+"Confluence","Summer","BAB","Aulacoseira [Centric Diatoms] (89.5%)
+Unknown centric diatom [Centric Diatoms] (2%)
+Thalassiosira [Centric Diatoms] (1.6%)
+Chlorella [Green Algae] (1.6%)
+Plagioselmis [Cryptophytes] (1.2%)",7,23.42,167.86,10.16,0.05,19.73,7199.86,6.33
+"Confluence","Summer","HAB","Plagioselmis [Cryptophytes] (12%)
+Unknown cyanobacterium [Cyanobacteria] (10.4%)
+Aulacoseira [Centric Diatoms] (9.3%)
+Chroococcus [Cyanobacteria] (9%)
+Aphanizomenon [Cyanobacteria] (8.6%)",72,22.79,1314.92,5.74,0.04,3.79,6498.04,13.81
+"Confluence","Summer","No bloom","Plagioselmis [Cryptophytes] (11.3%)
+Cyclotella [Centric Diatoms] (11.1%)
+Eucapsis [Cyanobacteria] (9.9%)
+Unknown centric diatom [Centric Diatoms] (8.5%)
+Cryptomonas [Cryptophytes] (4.8%)",131,22.29,1495.18,8.56,0.05,2.59,6350.89,14.63
+"Confluence","Winter","No bloom","Cyclotella [Centric Diatoms] (13%)
+Plagioselmis [Cryptophytes] (11.3%)
+Eucapsis [Cyanobacteria] (8.9%)
+Cocconeis [Pennate Diatoms] (7.2%)
+Entomoneis [Pennate Diatoms] (6%)",161,11.01,695.9,18.46,0.1,2.1,42556.66,9.98
+"Suisun Bay","Autumn","HAB","Navicula [Pennate Diatoms] (32.1%)
+Plagioselmis [Cryptophytes] (23.2%)
+Unknown green alga [Green Algae] (16.3%)
+Cryptomonas [Cryptophytes] (8.6%)
+Eucapsis [Cyanobacteria] (8.3%)",2,20.18,15262.5,5.9,0.05,1.6,3939,15.47
+"Suisun Bay","Autumn","No bloom","Eucapsis [Cyanobacteria] (17.5%)
+Plagioselmis [Cryptophytes] (10.5%)
+Unknown centric diatom [Centric Diatoms] (8.2%)
+Cyclotella [Centric Diatoms] (8%)
+Thalassiosira [Centric Diatoms] (6.7%)",136,15.49,16353.57,15.01,0.1,1.41,7894.38,11.04
+"Suisun Bay","Spring","BAB","Entomoneis [Pennate Diatoms] (34%)
+Eucapsis [Cyanobacteria] (14.5%)
+Aulacoseira [Centric Diatoms] (10.5%)
+Plagioselmis [Cryptophytes] (7.8%)
+Unknown centric diatom [Centric Diatoms] (5.7%)",20,18.1,4209.5,30.55,0.05,11,24258.75,4.18
+"Suisun Bay","Spring","No bloom","Eucapsis [Cyanobacteria] (19.6%)
+Cyclotella [Centric Diatoms] (9.8%)
+Unknown centric diatom [Centric Diatoms] (9.6%)
+Plagioselmis [Cryptophytes] (9%)
+Entomoneis [Pennate Diatoms] (5.7%)",129,18.35,6438.43,17.61,0.06,2.67,33781.73,4.69
+"Suisun Bay","Summer","BAB","Aulacoseira [Centric Diatoms] (24.4%)
+Thalassiosira [Centric Diatoms] (9.9%)
+Plagioselmis [Cryptophytes] (9.1%)
+Cocconeis [Pennate Diatoms] (8.7%)
+Unknown centric diatom [Centric Diatoms] (7.1%)",10,21.94,10778.6,21.2,0.04,9.79,5853.4,7.05
+"Suisun Bay","Summer","HAB","Eucapsis [Cyanobacteria] (30.7%)
+Teleaulax [Cryptophytes] (25.1%)
+Unknown centric diatom [Centric Diatoms] (13.2%)
+Cryptomonas [Cryptophytes] (10.3%)
+Cyclotella [Centric Diatoms] (8%)",4,21.6,11355.5,10,0.03,3.38,4445.75,10.38
+"Suisun Bay","Summer","No bloom","Eucapsis [Cyanobacteria] (21.4%)
+Cyclotella [Centric Diatoms] (9.7%)
+Entomoneis [Pennate Diatoms] (8.1%)
+Unknown centric diatom [Centric Diatoms] (6.8%)
+Plagioselmis [Cryptophytes] (6.7%)",149,21.28,12208.43,15.99,0.05,2.49,7359.28,11.36
+"Suisun Bay","Winter","BAB","Entomoneis [Pennate Diatoms] (55.7%)
+Chlorella [Green Algae] (12.2%)
+Unknown cyanobacterium [Cyanobacteria] (6.6%)
+Cyclotella [Centric Diatoms] (5.5%)
+Nitzschia [Pennate Diatoms] (5.2%)",8,12.8,5237.25,24.27,0.09,7.18,46419.75,5.6
+"Suisun Bay","Winter","No bloom","Eucapsis [Cyanobacteria] (17.9%)
+Entomoneis [Pennate Diatoms] (9%)
+Cyclotella [Centric Diatoms] (9%)
+Plagioselmis [Cryptophytes] (7.4%)
+Unknown cyanobacterium [Cyanobacteria] (6.4%)",128,11.34,7441.61,29.08,0.11,2.01,55427.84,5.42
