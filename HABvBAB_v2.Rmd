@@ -626,9 +626,9 @@ rm(p1,p2,p3)
 ```
 
 ## Calculate HAB/BAB/No bloom using MVI
-"HAB" if MVI = 3-5 AND occurs from June to October. 
-"BAB" if MVI = 1-2 from June to October OR if the sample was collected during a bloom between November and May.
-"No bloom" if sample was collected between November and May and chlorophyll is below the bloom threshold.
+"HAB" if MVI = 3-5
+"BAB" if MVI = 1-2 and bloom = "Yes"
+"No bloom" if MVI = 1-2 and bloom = "No"
 ```{r, warning=FALSE, message=FALSE}
 
 dat1 <- dat1 %>%
@@ -638,15 +638,10 @@ dat1 <- dat1 %>%
   mutate(
     mvi_class = case_when(
       is.na(Microcystis) ~ NA_character_,
-      Microcystis >= 3 & Month %in% 6:10 ~ "HAB",
-      Microcystis <= 2 & Month %in% 6:10 ~ "BAB",
-      Month %in% c(11, 12, 1:5) ~ "BAB",
+      Microcystis >= 3 ~ "HAB",
+      Microcystis <= 2 & bloom == "Yes" ~ "BAB",
+      Microcystis <= 2 & bloom == "No" ~ "No bloom",
       TRUE ~ NA_character_
-    ),
-    mvi_class = case_when(
-      mvi_class == "BAB" & bloom == "Yes" ~ "BAB",
-      mvi_class == "BAB" & bloom == "No" ~ "No bloom",
-      TRUE ~ mvi_class
     )
   )
 
