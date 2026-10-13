@@ -1,0 +1,98 @@
+---
+title: "Cross Channel Gates Exploration"
+author: "Alex Berk"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read in packages
+```{r Read in Packages, include=FALSE}
+library(tidyverse)
+library(mgcv)
+library(MuMIn)
+library(gratia)
+library(sf)
+library(plotly)
+theme_set(theme_classic())
+```
+
+Read in Water quality data
+```{r Read in Alexs csv, include=FALSE}
+# #read in Alex CSV
+# wq <- read.csv("Data/edi_df_integrate_monthly.csv") %>%
+#   filter(ymd(year_month) >= ymd(19790101))
+# 
+# #Ryan clams file 
+# cl <- read.csv("data/combined_clams_dataset.csv")
+
+#Read in Ryan CSV
+wq_r_sum <- read_csv("Data/regional_integrated_dataset3.csv") %>%
+  select(Year,Month,Regions,Chlorophyll)
+```
+
+dayflow - cross channel gates
+```{r dayflow, echo=FALSE}
+df1 <- read_csv("Data/Dayflow/dayflow-results-1970-1983.csv") %>%
+  select(Year,Month,Date,XGEO)
+df2 <- read_csv("Data/Dayflow/dayflow-results-1984-1996.csv") %>%
+  select(Year,Month,Date,XGEO)
+df3 <- read_csv("Data/Dayflow/dayflow-results-1997-2023.csv") %>%
+  select(Year,Month,Date,XGEO)
+
+df <- rbind(df1,df2,df3)
+
+#quick time series
+df$Date <- mdy(df$Date)
+
+plot(df$Date,df$XGEO,type="l")
+
+#summarize by month
+df <- df %>%
+  group_by(Year,Month) %>%
+  summarize(XGEO = mean(XGEO))
+  
+
+```
+merge xgeo with chlorophyll
+```{r merge, echo=FALSE}
+xc_chl <- wq_r_sum %>%
+  merge(df,by=c("Year","Month"),all.y=T) %>%
+  subset(Year >= 1979 & Year < 2023)
+```
+
+calculate bloom
+```{r bloom thresholds,echo=FALSE}
+#Binary transformation of bloom absence/presence
+bloom_thresholds <- xc_chl %>%
+  group_by(Regions) %>%
+  summarise(mean = mean(Chlorophyll,na.rm=T),sd=sd(Chlorophyll,na.rm=T)) %>%
+  mutate(bloom_thr = mean + sd) %>%
+  select(-mean,-sd)
+
+#add bloom presence/absence and xcg open/close
+xc_chl <- xc_chl %>%
+  merge(bloom_thresholds,by="Regions",all.x=T) %>%
+  mutate(bloom = case_when(Chlorophyll > bloom_thr ~ 1,
+                           Chlorophyll < bloom_thr ~ 0))
+
+```
+
+
+XGEO vs Chlorophyll
+```{r plot xgeo vs chl, echo=FALSE}
+
+plot(xc_chl$XGEO,xc_chl$Chlorophyll)
+```
+
+xgeo vs bloom
+```{r plot xgeo vs bloom, echo=FALSE}
+plot(xc_chl$XGEO,xc_chl$bloom)
+```
+
+
+
+
