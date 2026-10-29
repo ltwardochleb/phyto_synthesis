@@ -600,10 +600,11 @@ logDissOrthophos -> turn to linear
 laglogDissAmmonia_mo -> turn to linear
 laglogDissOrthophos -> turn to linear
 laglogDissNitrateNitrito_mo -> turn to linear
-
+removing contemporary SAC flow terms and interactions
+SJR k=4
 
 ```{r  cache = TRUE}
-smr.1.reduced <- gam(logchla ~ logDissAmmonia + logDissOrthophos + logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions) + s(logSJR) + s(logSJR, by=Regions) + s(EXPORT) + s(EXPORT, by=Regions) + s(laglogSAC_mo) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(laglogDissNitrateNitrite_mo), data=smr, method = 'ML', select=TRUE)
+smr.1.reduced <- gam(logchla ~ logDissAmmonia + logDissOrthophos + logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSJR) + s(logSJR, by=Regions) + s(EXPORT) + s(EXPORT, by=Regions) + s(laglogSAC_mo) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(laglogDissNitrateNitrite_mo), data=smr, method = 'ML', select=TRUE)
 ```
 
 ### summary 
@@ -628,9 +629,12 @@ smr.1.SJR.EXPORT.reduced <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos
 summary(smr.1.SJR.EXPORT)
 ```
 
+## smr.1.Index
+running a version with only Index and no flow terms.
 
-
-
+```{r  cache = TRUE}
+smr.1.Index <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo) + s(laglogDissNitrateNitrite_3mo), data=smr, method = 'ML', select=TRUE)
+```
 
 
 
