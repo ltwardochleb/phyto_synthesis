@@ -1,0 +1,1280 @@
+# Read in Data
+
+```{r}
+library(tidyverse)
+library(here)
+library(nnet)
+library(mgcv)
+library(car)
+library(DHARMa)
+library(corrplot)
+library(sandwich)
+library(lmerTest)
+library(lme4)
+library(nnet)
+
+load(here::here('Short Term Analysis/st_data/05_transforms.Rda'))
+```
+
+```{r}
+# custom functions for later (flatten the cluster covariance matrices)
+coef.multinom_flat <- function(object, ...) {
+  B <- NextMethod()
+  v <- as.vector(t(B))
+  names(v) <- paste(rep(rownames(B), each = ncol(B)),
+                    rep(colnames(B), times = nrow(B)), sep = ':')
+  v
+}
+
+vcov.multinom_flat <- function(object, ...) attr(object, 'V_cl')
+```
+
+```{r}
+build_variance_components <- function(df, station_vars){#, region_time_vars) {
+
+  # WITHIN RT (region-month-year)
+  df <- df %>%
+    group_by(Region, region_time) %>%
+    mutate(
+      across(
+        all_of(station_vars),
+        list(
+          rt_mean = ~ mean(.x, na.rm = TRUE),   # region-time mean (Xbar_rt)
+          within_rt = ~ .x - mean(.x, na.rm = TRUE) # dev per station (d_srt)
+        ),
+        .names = '{.col}_{.fn}'
+      )
+    ) %>%
+    ungroup()
+
+  # BETWEEN REGION (regional mean)
+  rt_mean_vars <- paste0(station_vars, '_rt_mean')
+
+  region_means <- df %>%
+    distinct(
+      Region,
+      region_time,
+      across(all_of(rt_mean_vars))
+    ) %>%
+    group_by(Region) %>%
+    summarize(
+      across(
+        all_of(rt_mean_vars),
+        ~ mean(.x, na.rm = TRUE),  # regional mean (Xbar_r)
+        .names = '{.col}_bw_region'
+      ),
+      .groups = 'drop'
+    ) %>%
+    rename_with(
+      ~ sub('_rt_mean_bw_region$', '_bw_region', .x)
+    )
+
+  df <- df %>%
+    left_join(region_means, by = 'Region')
+
+  # OVER RT (d_rt = Xbar_rt - Xbar_r)
+  for (v in station_vars) {
+    df[[paste0(v, '_over_rt')]] <-
+      df[[paste0(v, '_rt_mean')]] -
+      df[[paste0(v, '_bw_region')]]
+  }
+
+  # REGION-TIME VARS (already at rt level; no within-rt, has over_rt/bw_region)
+  # region_time_bw <- df %>%
+  #   distinct(Region, region_time, across(all_of(region_time_vars))) %>%
+  #   group_by(Region) %>%
+  #   summarize(
+  #     across(
+  #       all_of(region_time_vars),
+  #       ~ mean(.x, na.rm = TRUE),
+  #       .names = '{.col}_bw_region'
+  #     ),
+  #     .groups = 'drop'
+  #   )
+  # 
+  # df <- df %>%
+  #   left_join(region_time_bw, by = 'Region')
+  # 
+  # for (v in region_time_vars) {
+  #   df[[paste0(v, '_over_rt')]] <-
+  #     df[[v]] - df[[paste0(v, '_bw_region')]]
+  # }
+
+  df
+}
+```
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+```
+
+
+# BAB vs No Bloom
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag',
+  'log_SJR_lag',
+  'log_EXPORTS_lag',
+  'log_OUT_lag'
+)
+
+# DATA
+
+# No Bloom: 0; BAB: 1
+df_bab <- df_mvi %>%
+  filter(mvi_class != 'HAB') %>%
+  mutate(
+    BAB = as.integer(mvi_class == 'BAB')
+  )
+
+df_bab <- build_variance_components(df_bab, station_vars)#, region_time_vars)
+```
+
+```{r}
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsb) %>%
+  dplyr::bind_rows()
+
+# variance_check <- lapply(c(station_vars, region_time_vars), calc_variance_decomp, df = df_wsjr) %>%
+#   dplyr::bind_rows()
+
+variance_check
+```
+
+## All Flows
+
+```{r}
+m_bab_af <- glm(
+  BAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + Region +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    # log_DissAmmonia_lag_within_rt + log_DissAmmonia_lag_over_rt +
+    
+    # log_DissNitrateNitrite_lag_within_rt + log_DissNitrateNitrite_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_bab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_bab_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bab_af,
+  vcov. = V_rt_date
+)
+```
+## NDOI
+
+```{r}
+m_bab_ndoi <- glm(
+  BAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + Region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    # log_DissAmmonia_lag_within_rt + log_DissAmmonia_lag_over_rt +
+    
+    # log_DissNitrateNitrite_lag_within_rt + log_DissNitrateNitrite_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_bab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_bab_ndoi,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_bab_ndoi,
+  vcov. = V_rt_date
+)
+```
+
+# HAB vs No Bloom
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN_lag',
+  'frac_NH4_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DissSilica_lag',
+  'log_DissOrthophos_lag',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag',
+  'log_SJR_lag',
+  'log_EXPORTS_lag',
+  'log_OUT_lag'
+)
+
+# DATA
+
+# No Bloom: 0; BAB: 1
+df_hab <- df_mvi %>%
+  filter(mvi_class != 'BAB') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  ) %>%
+  filter(Region != 'Suisun Bay')
+
+df_hab <- build_variance_components(df_hab, station_vars)#, region_time_vars)
+```
+
+```{r}
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsb) %>%
+  dplyr::bind_rows()
+
+# variance_check <- lapply(c(station_vars, region_time_vars), calc_variance_decomp, df = df_wsjr) %>%
+#   dplyr::bind_rows()
+
+variance_check
+```
+
+## All Flows
+
+### All Data
+
+```{r}
+m_hab_af <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_SAC + log_SJR + log_EXPORTS +
+    
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_hab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hab_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hab_af,
+  vcov. = V_rt_date
+)
+```
+### High T Only
+
+```{r}
+m_hab_af_s <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + Region +
+
+    log_SAC + log_SJR + log_EXPORTS +
+
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = subset(df_hab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hab_af_s,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hab_af_s,
+  vcov. = V_rt_date
+)
+```
+```{r}
+ggplot(
+  subset(df_hab, Temperature >= 0.55),
+  aes(x = factor(HAB), y = Temperature, color = Season)
+) +
+  geom_boxplot(aes(group = HAB), color = 'black', outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.7) +
+  scale_x_discrete(labels = c('0' = 'No Bloom', '1' = 'HAB')) +
+  theme_classic()
+```
+
+## NDOI
+
+### All Data
+
+```{r}
+m_hab_ndoi <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+    
+    log_OUT +
+    
+    log_OUT_lag3 +
+    
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_hab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hab_ndoi,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hab_ndoi,
+  vcov. = V_rt_date
+)
+```
+
+### High T Only
+
+```{r}
+m_hab_ndoi_s <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + Region +
+
+    log_OUT +
+
+    log_OUT_lag3 +
+
+    log_DIN_lag_over_rt +
+
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt,
+  
+  data = subset(df_hab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hab_ndoi_s,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hab_ndoi_s,
+  vcov. = V_rt_date
+)
+```
+
+```{r}
+test <- glm(
+  HAB ~
+    Temperature +
+    
+    log_Turbidity_lag +
+
+    log_Conductivity + Region +
+
+    log_OUT +
+
+    log_OUT_lag3 +
+
+    log_DIN_lag +
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissOrthophos_lag,
+  
+  data = subset(df_hab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  test,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  test,
+  vcov. = V_rt_date
+)
+```
+
+# HAB vs BAB
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN',
+  'log_DissAmmonia',
+  'log_DissNitrateNitrite',
+  'log_DIN_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DIN_lag3',
+  'log_DissAmmonia_lag3',
+  'log_DissNitrateNitrite_lag3',
+  'log_DissSilica',
+  'log_DissSilica_lag',
+  'log_DissSilica_lag3',
+  'log_DissOrthophos',
+  'log_DissOrthophos_lag',
+  'log_DissOrthophos_lag3',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag3',
+  'log_SJR_lag3',
+  'log_EXPORTS_lag3',
+  'log_OUT_lag3'
+)
+
+# DATA
+
+# No Bloom: 0; BAB: 1
+df_hbab <- df_mvi %>%
+  filter(mvi_class != 'No Bloom') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  ) %>%
+  filter(Region != 'Suisun Bay')
+
+df_hbab <- build_variance_components(df_hbab, station_vars)#, region_time_vars)
+```
+
+```{r}
+df_subset %>%
+  count(HAB) %>%
+  mutate(
+    percent = 100 * n / sum(n)
+  )
+```
+
+
+```{r}
+variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsb) %>%
+  dplyr::bind_rows()
+
+variance_check
+```
+## STUFF
+
+```{r}
+library(nnet)
+library(sandwich)
+library(lmtest)
+
+df_nosb <- df_mvi %>% filter(Region != 'Suisun Bay') %>%
+  droplevels()
+df_nosb <- build_variance_components(df_nosb, station_vars)
+levels(df_nosb$Region)
+
+m_hbab_af_s <- nnet::multinom(
+  mvi_class ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + Region +
+
+    log_SAC + log_SJR + log_EXPORTS +
+
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    
+    log_DissAmmonia_over_rt +
+    
+    log_DissNitrateNitrite_over_rt +
+    
+    log_DissSilica +
+    
+    log_DissOrthophos_within_rt +
+    
+    log_DissAmmonia_lag3_over_rt +
+    
+    log_DissNitrateNitrite_lag3_over_rt +
+
+    log_DissSilica_lag3 +
+    
+    log_DissOrthophos_lag3_within_rt,
+  
+  data = subset(df_nosb, Temperature >= 0.55),
+  trace = FALSE
+)
+
+table(df_nosb$mvi_class[df_nosb$Temperature >= 0.55])
+```
+
+```{r}
+table(df_nosb$mvi_class)
+```
+
+
+```{r}
+X <- model.matrix(
+  ~ Temperature_over_rt +
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+    log_Conductivity_over_rt + Region +
+    log_SAC + log_SJR + log_EXPORTS +
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+    log_DIN_over_rt +
+    log_DissSilica +
+    log_DissOrthophos_within_rt +
+    log_DIN_lag3_over_rt +
+    log_DissSilica_lag3 +
+    log_DissOrthophos_lag3_within_rt,
+  data = subset(df_nosb, Temperature >= 0.55)
+)
+
+X <- X[, -1, drop = FALSE]
+
+vif <- sapply(seq_len(ncol(X)), function(j) {
+  1 / (1 - summary(lm(X[, j] ~ X[, -j]))$r.squared)
+})
+
+names(vif) <- colnames(X)
+sort(vif, decreasing = TRUE)
+```
+
+
+
+## All Flows
+
+### All Data
+
+```{r}
+m_hbab_af <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+
+    log_SAC + log_SJR + log_EXPORTS +
+
+    log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3 +
+
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_hbab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hbab_af,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hbab_af,
+  vcov. = V_rt_date
+)
+```
+
+### High T Only
+
+```{r}
+df_hbab <- df_hbab %>%
+  mutate(
+    doy = lubridate::yday(Date),
+    doy_z = as.numeric(scale(doy))
+  )
+
+m_hbab_af_s <- glm(
+  HAB ~
+    doy_z +
+    
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + # log_Turbidity_lag_over_rt +
+
+    # log_Conductivity_over_rt +
+    
+    Region + #log_Conductivity_bw_region + # Region +
+
+    log_SAC + log_SJR + # log_EXPORTS +
+
+    # log_SAC_lag3 + log_SJR_lag3  + # log_EXPORTS_lag3 +
+    
+    # log_DIN_over_rt +
+    
+    log_DissAmmonia_over_rt +
+    
+    log_DissNitrateNitrite_over_rt +
+
+    log_DissSilica +
+    
+    log_DissOrthophos_within_rt +
+    
+    log_DissAmmonia_lag_over_rt +
+    
+    log_DissNitrateNitrite_lag_over_rt +
+
+    # log_DIN_lag_within_rt +
+    # log_DIN_lag3_over_rt +
+    
+    # log_DIN_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt +
+
+    log_DissSilica_lag +
+
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag3 +
+    
+    log_DissOrthophos_lag3_within_rt,
+    # + log_DissOrthophos_lag_over_rt,
+  
+  data = subset(df_hbab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hbab_af_s,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hbab_af_s,
+  vcov. = V_rt_date
+)
+```
+```{r}
+# N alone + essential adjustment variables
+test <- glm(HAB ~ doy_z + Region + Temperature_over_rt +
+      log_DissAmmonia_over_rt +
+      log_DissNitrateNitrite_over_rt +
+      log_DissAmmonia_lag_over_rt +
+      log_DissNitrateNitrite_lag_over_rt,
+        data = subset(df_hbab, Temperature >= 0.55),
+  family = binomial)
+
+V_rt_date <- vcovCL(
+  test,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  test,
+  vcov. = V_rt_date
+)
+```
+```{r}
+df_subset <- df_hbab %>% filter(Temperature >= 0.55)
+
+library(brms)
+fit_bayes_re <- brm(
+  HAB ~ doy_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region +
+    log_SAC + log_SJR +
+    log_SAC_lag + log_SJR_lag +
+    log_SAC_lag3 + log_SJR_lag3 +
+    log_DIN_over_rt +
+    log_DissSilica_over_rt +
+    log_DissOrthophos_within_rt +
+    log_DIN_lag_over_rt +
+    log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
+    log_DissSilica_lag_over_rt +
+    log_DissSilica_lag3_over_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | region_time) +
+    (1 | Date),
+  
+  data = df_subset,
+  family = bernoulli("logit"),
+  
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 2.5), class = "Intercept"),
+    prior(exponential(1), class = "sd")
+  ),
+  
+  chains = 2,
+  iter = 1000,
+  warmup = 500,
+  cores = 2,
+  backend = "cmdstanr",
+  seed = 123
+)
+
+summary(fit_bayes_re)
+```
+
+```{r}
+library(performance)
+
+check_collinearity(fit_bayes_re)
+```
+
+
+```{r}
+fit_prior <- brm(
+  formula(fit_bayes_re),
+  data = df_subset,
+  family = bernoulli("logit"),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 2.5), class = "Intercept"),
+    prior(exponential(1), class = "sd")
+  ),
+  sample_prior = "only",
+  chains = 2,
+  iter = 1000,
+  cores = 2,
+  backend = "cmdstanr",
+  seed = 123
+)
+
+pp_check(fit_prior, type = "bars")
+pp_check(fit_bayes_re, type = "bars")
+
+unique(df_subset$HAB)
+table(df_subset$HAB)
+```
+
+```{r}
+df_subset %>%
+  mutate(Month = month(Date, label = TRUE, abbr = TRUE)) %>%
+  ggplot(aes(x = Month, y = log_DissOrthophos)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.25) +
+  labs(
+    x = NULL,
+    y = "DIN",
+    title = "Seasonality of DIN"
+  ) +
+  theme_classic()
+```
+
+```{r}
+
+df_mvi <- df_mvi %>%
+  mutate(
+    log_DissSilica = if_else(log_DissSilica < -10, NA_real_, log_DissSilica)
+  )
+
+test <- df_hbab %>% filter(Temperature >= 0.55)
+
+test %>%
+  mutate(Month = month(Date, label = TRUE, abbr = TRUE)) %>%
+  ggplot(aes(x = Month, y = log_DissSilica)) +
+  geom_boxplot() +
+  labs(
+    x = "Month",
+    y = "Dissolved silica",
+    title = "Seasonality of Dissolved Silica"
+  ) +
+  theme_minimal()
+
+df_hbab %>%
+  mutate(Month = month(Date, label = TRUE)) %>%
+  count(Month, mvi_class) %>%
+  tidyr::pivot_wider(
+    names_from = mvi_class,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+
+```{r}
+vif(m_hbab_af_s)
+```
+```{r}
+AIC(m_hbab_af_s)
+```
+```{r}
+BIC(m_hbab_af_s)
+```
+
+### High T Only (2)
+
+### High T Only
+
+```{r}
+m_hbab_af_s <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + # log_Turbidity_lag_over_rt +
+
+    # log_Conductivity_over_rt +
+    
+    Region + #log_Conductivity_bw_region + # Region +
+
+    log_SAC + log_SJR + # log_EXPORTS +
+
+    # log_SAC_lag3 + log_SJR_lag3  + # log_EXPORTS_lag3 +
+    
+    log_DIN_over_rt +
+    
+    # log_DissAmmonia_over_rt +
+    
+    # log_DissNitrateNitrite_over_rt +
+
+    log_DissSilica +
+    
+    log_DissOrthophos_within_rt +
+    
+    # log_DissAmmonia_lag_over_rt +
+    
+    # log_DissNitrateNitrite_lag_over_rt +
+
+    # log_DIN_lag_within_rt +
+    log_DIN_lag_over_rt +
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag +
+    
+    log_DissOrthophos_lag_within_rt,
+    # + log_DissOrthophos_lag_over_rt,
+  
+  data = subset(df_hbab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hbab_af_s,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hbab_af_s,
+  vcov. = V_rt_date
+)
+```
+```{r}
+
+```
+
+
+```{r}
+library(mgcv)
+
+m_hbab_af_s_gam <- gam(
+  HAB ~
+    s(Temperature_over_rt) +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + Region +
+
+    s(log_SAC) + s(log_SJR) + s(log_EXPORTS) +
+
+    s(log_SAC_lag3) + s(log_SJR_lag3) + s(log_EXPORTS_lag3) +
+    
+    log_DIN_over_rt +
+    
+    log_DissSilica +
+    
+    log_DissOrthophos_within_rt +
+    
+    log_DIN_lag3_over_rt +
+    
+    log_DissSilica_lag3 +
+    
+    log_DissOrthophos_lag3_within_rt,
+  
+  data = subset(df_hbab, Temperature >= 0.55),
+  family = binomial,
+  method = 'REML'
+)
+
+summary(m_hbab_af_s_gam)
+```
+```{r}
+library(gratia)
+draw(m_hbab_af_s_gam)
+```
+
+
+```{r}
+summary(df_hbab)
+```
+
+
+```{r}
+ggplot(
+  subset(df_hbab, Temperature >= 0.55),
+  aes(x = factor(HAB), y = Temperature, color = Season)
+) +
+  geom_boxplot(aes(group = HAB), color = 'black', outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.7) +
+  scale_x_discrete(labels = c('0' = 'BAB', '1' = 'HAB')) +
+  theme_classic()
+```
+
+```{r}
+ggplot(
+  subset(df_hbab, Season == 'Summer'),
+  aes(x = factor(HAB), y = log_DissSilica_lag_within_rt)
+) +
+  geom_boxplot() +
+  facet_wrap(~ Region) +
+  theme_classic()
+```
+
+```{r}
+ggplot(
+  subset(df_hbab, Season == 'Summer'),
+  aes(x = factor(HAB), y = log_DissSilica)
+) +
+  geom_boxplot() +
+  facet_wrap(~ Region) +
+  labs(
+    x = 'Bloom type',
+    y = 'log Dissolved Silica'
+  ) +
+  scale_x_discrete(labels = c('0' = 'BAB', '1' = 'HAB')) +
+  theme_classic()
+```
+
+
+```{r}
+# HAB/BAB by Season
+with(df_mvi, table(Season, mvi_class))
+
+# HAB/BAB by Region
+with(df_mvi, table(Region, mvi_class))
+
+with(
+  df_mvi,
+  table(Season, Region, mvi_class)
+)
+```
+
+
+## NDOI
+
+### All Data
+
+```{r}
+m_hbab_ndoi <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+
+    log_OUT +
+
+    log_OUT_lag3 +
+
+    log_DIN_lag_within_rt + log_DIN_lag_over_rt +
+
+    frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag_within_rt + log_DissSilica_lag_over_rt +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = df_hbab,
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hbab_ndoi,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hbab_ndoi,
+  vcov. = V_rt_date
+)
+```
+
+### High T Only
+
+```{r}
+m_hbab_ndoi_s <- glm(
+  HAB ~
+    Temperature_over_rt +
+    
+    log_Turbidity_lag_within_rt + log_Turbidity_lag_over_rt +
+
+    log_Conductivity_over_rt + log_Conductivity_bw_region +
+
+    log_OUT +
+
+    log_OUT_lag3 +
+
+    log_DIN_lag_within_rt + 
+    log_DIN_lag_over_rt +
+
+    # frac_NH4_lag_within_rt + frac_NH4_lag_over_rt +
+    
+    log_DissSilica_lag +
+    
+    log_DissOrthophos_lag_within_rt + log_DissOrthophos_lag_over_rt,
+  
+  data = subset(df_hbab, Temperature >= 0.55),
+  family = binomial
+)
+
+V_rt_date <- vcovCL(
+  m_hbab_ndoi_s,
+  cluster = ~ region_time + Date,
+  cadjust = TRUE
+)
+
+lmtest::coeftest(
+  m_hbab_ndoi_s,
+  vcov. = V_rt_date
+)
+```
+# Extra
+
+```{r}
+ldcurve <- function(model, var) {
+
+  dat <- model.frame(model)
+  response <- names(dat)[1]
+
+  newdat <- dat[1, , drop = FALSE]
+
+  for (x in names(dat)) {
+    if (x != response && x != var && is.numeric(dat[[x]])) {
+      newdat[[x]] <- mean(dat[[x]], na.rm = TRUE)
+    }
+  }
+
+  if ('Region' %in% names(dat)) {
+    newdat$Region <- factor('Central', levels = levels(dat$Region))
+  }
+
+  # vary predictor across its observed range
+  x <- seq(
+    min(dat[[var]], na.rm = TRUE),
+    max(dat[[var]], na.rm = TRUE),
+    length.out = 1000
+  )
+
+  newdat <- newdat[rep(1, 1000), , drop = FALSE]
+  newdat[[var]] <- x
+
+  # predictions and 95% CI
+  pred <- predict(model, newdata = newdat, type = 'link', se.fit = TRUE)
+
+  prob <- plogis(pred$fit)
+  lo <- plogis(pred$fit - 1.96 * pred$se.fit)
+  hi <- plogis(pred$fit + 1.96 * pred$se.fit)
+
+  # predictor value corresponding to 5% probability
+  threshold <- NA_real_
+
+  if (0.05 >= min(prob) && 0.05 <= max(prob)) {
+    o <- order(prob)
+    threshold <- approx(
+      x = prob[o],
+      y = x[o],
+      xout = 0.05
+    )$y
+  }
+
+  # plot
+  plot(
+    x, prob,
+    type = 'n',
+    ylim = c(0, 1),
+    xlab = var,
+    ylab = 'Cond. Probability of HAB'
+  )
+
+  polygon(
+    c(x, rev(x)),
+    c(hi, rev(lo)),
+    col = 'grey80',
+    border = NA
+  )
+
+  lines(x, prob, lwd = 2)
+  lines(x, hi, lty = 'dashed')
+  lines(x, lo, lty = 'dashed')
+
+  abline(h = 0.05, lty = 'dashed')
+
+  if (!is.na(threshold)) {
+    abline(v = threshold, lty = 'dashed')
+  }
+
+  return(threshold)
+}
+```
+
+```{r}
+ldcurve(m_hbab_af_s, 'log_SAC')
+```
+```{r}
+ldcurve(m_hbab_af_s, 'log_SAC_lag3')
+```
+
+# Tables
+
+```{r}
+with(subset(df_mvi, mvi_class == 'BAB'), table(Season, Region))
+```
+

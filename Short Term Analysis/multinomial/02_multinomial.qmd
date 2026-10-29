@@ -719,8 +719,9 @@ m_mn <- mclogit::mblogit(
   # )
 )
 
-summary(m_mn)
+# summary(m_mn)
 ```
+
 ```{r}
 vif(m_mn)
 ```
@@ -743,8 +744,9 @@ m_mn <- nnet::multinom(
   trace = FALSE
 )
 
-summary(m_mn)
+# summary(m_mn)
 ```
+
 ```{r}
 library(lmtest)
 

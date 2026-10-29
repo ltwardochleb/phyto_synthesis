@@ -18,6 +18,29 @@ df_mvi <- df_mvi %>%
     clam_biomass = monreg_biomass,
     filt_rate = monreg_filt_rate
   )
+
+# Temp stuff
+
+range(df_mvi$Temperature[df_mvi$mvi_class == 'HAB'], na.rm = TRUE)
+
+ggplot(
+  subset(df_mvi, mvi_class %in% c('BAB', 'HAB')),
+  aes(x = mvi_class, y = Temperature)
+) +
+  geom_boxplot() +
+  geom_jitter(width = 0.15, alpha = 0.4, aes(color = Season)) +
+  # scale_x_discrete(labels = c('0' = 'BAB', '1' = 'HAB')) +
+  labs(x = NULL, y = 'Temperature') +
+  theme_classic()
+
+quantile(
+  df_mvi$Temperature[df_mvi$mvi_class == 'HAB'],
+  probs = c(0, .01, .025, .05, .10, .25),
+  na.rm = TRUE
+)
+
+(20 - mean(df_mvi$Temperature, na.rm = TRUE)) /
+  sd(df_mvi$Temperature, na.rm = TRUE)
 ```
 
 # derive analytes
@@ -116,14 +139,13 @@ df_mvi <- df_mvi %>%
 Based on what variables I know will be used
 
 ```{r}
-lag_vars_1mo <- c(
-  'log_DissAmmonia', 'log_DissNitrateNitrite', 'log_DIN', 'log_DON',
-  'log_TDN', 'frac_NH4', 'frac_DON', 'frac_DIN', 'frac_NH4_TDN',
-  'log_DissSilica', 'log_DissOrthophos', 'log_Turbidity',
-  'log_graze_rate', 'Temperature', 'log_Conductivity'
-)
+lag_vars_1mo <- c('log_DissAmmonia', 'log_DissNitrateNitrite', 'log_DIN', 'log_DON',
+                  'log_TDN', 'frac_NH4', 'frac_DON', 'frac_DIN', 'frac_NH4_TDN',
+                  'log_DissSilica', 'log_DissOrthophos', 'log_Turbidity',
+                  'log_graze_rate', 'Temperature', 'log_Conductivity',
+                  'log_SJR', 'log_SAC', 'log_EXPORTS', 'log_OUT')
 
-lag_vars_3mo <- c('log_SJR', 'log_SAC', 'log_EXPORTS', 'log_OUT')
+lag_vars_3mo <- c('log_SJR', 'log_SAC', 'log_EXPORTS', 'log_OUT', 'log_DissNitrateNitrite','log_DIN','log_DissAmmonia','log_DissSilica','log_DissOrthophos')
 
 df_lag <- df_mvi %>%
   mutate(
@@ -193,8 +215,8 @@ df_mvi <- df_lag
 
 # FOR NOW, NO CLAMS
 
-df_mvi <- df_mvi %>%
-  select(-c(log_graze_rate, log_graze_rate_lag))
+# df_mvi <- df_mvi %>%
+#   select(-c(log_graze_rate, log_graze_rate_lag))
 ```
 
 ```{r}
