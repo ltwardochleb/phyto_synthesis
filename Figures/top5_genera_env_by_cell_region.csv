@@ -1,0 +1,23 @@
+Region,Bloom Classification,Top Genera,N,Mean Temperature,Mean Conductivity,Mean Turbidity,Mean Ammonium,Mean Chlorophyll,Mean Outflow,Mean Clam Biomass
+Central,BAB,"Aulacoseira [Centric Diatoms] (23.5%)
+Unknown cryptophyte [Cryptophytes] (13.4%)
+Cyclotella [Centric Diatoms] (7.9%)
+Plagioselmis [Cryptophytes] (6.6%)
+Cryptomonas [Cryptophytes] (6.5%)",17,21.69,312.53,7.68,0.06,14.68,17332.24,3.38
+Central,HAB,Chroococcus [Cyanobacteria] (11.5%)Plagioselmis [Cryptophytes] (10.6%)Unknown cyanobacterium [Cyanobacteria] (8%)Aphanizomenon [Cyanobacteria] (7.9%)Cryptomonas [Cryptophytes] (6.7%),60,23.9,451.88,3.64,0.03,4.62,6107.33,2.05
+Central,No bloom,"Plagioselmis [Cryptophytes] (17.3%)
+Cocconeis [Pennate Diatoms] (8.7%)
+Cryptomonas [Cryptophytes] (8.2%)
+Eucapsis [Cyanobacteria] (6.6%)
+Aulacoseira [Centric Diatoms] (5.7%)",333,16.9,378.8,5.79,0.06,2.1,24927.91,2.84
+Confluence,BAB,"Aulacoseira [Centric Diatoms] (73.5%)
+Entomoneis [Pennate Diatoms] (6.8%)
+Unknown centric diatom [Centric Diatoms] (4.4%)
+Actinocyclus [Centric Diatoms] (3%)
+Chlorella [Green Algae] (1.8%)",16,19.15,721.38,16.04,0.05,24.94,8061.06,8.88
+Confluence,HAB,Plagioselmis [Cryptophytes] (13.7%)Unknown cyanobacterium [Cyanobacteria] (10.3%)Aulacoseira [Centric Diatoms] (8.5%)Chroococcus [Cyanobacteria] (8%)Aphanizomenon [Cyanobacteria] (7.1%),89,22.33,1354.48,5.37,0.04,3.53,6192.56,13.44
+Confluence,No bloom,"Plagioselmis [Cryptophytes] (13.3%)
+Eucapsis [Cyanobacteria] (10.8%)
+Cyclotella [Centric Diatoms] (9%)
+Entomoneis [Pennate Diatoms] (6.9%)
+Cocconeis [Pennate Diatoms] (6.3%)",665,16.26,1364.18,11.22,0.07,2.05,21045.41,12.22
