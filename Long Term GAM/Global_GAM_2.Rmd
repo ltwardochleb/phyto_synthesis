@@ -81,9 +81,6 @@ df$logEXPORT <- log(df$EXPORT)
 
 df <- subset(df, select = c)
 
-# Make sure all dates are present for lag variables later on.
-df %>% complete(Date = seq(min(Date), max(Date), by = "1 month"))
-
 ```
 
 
@@ -299,6 +296,9 @@ df_list_lag <- lapply(regional_imp_dfs, function(y){
     # Sort chronologically within each group
     arrange(Regions, Date) %>%
     
+    # Make sure all dates are present for lag variables later on.
+    complete(Date = seq(min(Date), max(Date), by = "1 month")) %>%
+    
     # Lag all numeric columns by 3 rows
     mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag3_{col}")) %>%
 
@@ -363,36 +363,36 @@ Now we have to combine the 25 regional datasets into 5 datasets that include all
 ```{r}
 ### df1
 df1 <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
-             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) %>%
+             df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) #%>%
   # z-score as the last step before the GAM
-  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+ # mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 ### df2
 df2 <- distinct(rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
-             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))%>%
+             df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))#%>%
  # z-score 
-  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+ # mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 ### df3
 
 df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
-             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))%>%
+             df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))#%>%
   # z-score 
-  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+ # mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 ### df4
 df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
-             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))%>%
+             df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))#%>%
   # z-score 
-  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+ # mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 
 ### df5
 
 df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
-             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))%>%
+             df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))#%>%
   # z- score
-  mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
+ # mutate(across(!c(Regions,season,Date,Month, Year, season_num, clam_step), ~as.vector(scale(.))))
 
 # Make regions a factor
 df1$Regions <- as.factor(df1$Regions)
@@ -420,15 +420,15 @@ summary(m3.1.lme)
 This time, I am fitting the top performing models with linear terms for the nutrients, removing season, the random effect of regions, and changing the seasonal lag to a 3-month lag.
 
 ```{r}
-m3.1 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step + s(logOUT) + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df1, method = 'ML', select=TRUE)
+m3.1 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df1, method = 'ML', select=TRUE)
 
-m3.2 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step + s(logOUT) + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df2, method = 'ML', select=TRUE)
+m3.2 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step  + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df2, method = 'ML', select=TRUE)
 
-m3.3 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(logOUT) + clam_step + s(logOUT) + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df3, method = 'ML', select=TRUE)
+m3.3 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(logOUT) + clam_step + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df3, method = 'ML', select=TRUE)
 
-m3.4 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(logOUT) + clam_step + s(logOUT) + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df4, method = 'ML', select=TRUE)
+m3.4 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity) + s(logOUT) + clam_step  + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df4, method = 'ML', select=TRUE)
 
-m3.5 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step + s(logOUT) + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df5, method = 'ML', select=TRUE)
+m3.5 <- gam((logchla) ~ logDissAmmonia + logDissNitrateNitrite + lag3_logDissNitrateNitrite + s(Temperature) + s(logConductivity)  + s(logOUT) + clam_step  + s(lag3_logOUT) + lag3_logDissAmmonia+ logDissOrthophos+ lag3_logDissOrthophos, data=df5, method = 'ML', select=TRUE)
 ```
 
 ```{r}
@@ -506,7 +506,7 @@ summary(m3.1)
 ## Plot Predictions
 
 ```{r echo=FALSE}
-var_list = list("logDissAmmonia","logDissNitrateNitrite","lag3_logDissNitrateNitrite","logConductivity", "logOUT","lag3_logOUT", "lag3_logDissAmmonia","logDissOrthophos","lag3_logDissOrthophos", "logOUT", "clam_step")
+var_list = list("log(Dissolved Ammonia)"="logDissAmmonia","log(NO2+NO3)"="logDissNitrateNitrite","3 mo.lag of log(NO2+NO3)"="lag3_logDissNitrateNitrite","logConductivity", "log(NDOI)"="logOUT","3 mo. lag of log(NDOI)"="lag3_logOUT", "lag3_logDissAmmonia","logDissOrthophos","lag3_logDissOrthophos", "logOUT", "clam_step")
 ```
 
 ```{r}
@@ -517,6 +517,71 @@ lapply(var_list, function(var) {
 })
 ```
 
+## Plots for BDSC
+
+```{r}
+
+#Dissolved Nitrate Nitrite
+
+plot_predictions(m3.1, condition = "logDissAmmonia", points = 0.5) +
+      theme_classic(base_size = 12) + labs(
+    x = "log(NH4)",
+    y = "log(Chlorophyll-a)",
+    title = "Model Predictions - Contemporary")
+
+```
+```{r}
+
+#lag Dissolved Nitrate Nitrite
+
+plot_predictions(m3.1, condition = "lag3_logDissAmmonia", points = 0.5) +
+      theme_classic(base_size = 12) +
+  labs(
+    x = "log(3 month lag NO2+NO3)",
+    y = "log(Chlorophyll-a)",
+    title = "3-Month Lag")
+
+```
+
+```{r}
+
+# NDOI
+
+plot_slopes(m3.1, variables="logOUT", condition = "logOUT") +
+      theme_classic(base_size = 12) + labs(
+    x = "log(NDOI)",
+    y = "slope",
+    title = "Marginal Effects - NDOI")
+
+```
+
+```{r}
+
+#lag NDOI
+
+
+plot_slopes(m3.1, variables="lag3_logOUT", condition = "lag3_logOUT") +
+      theme_classic(base_size = 12) +
+  labs(
+    x = "log(3 month lag NDOI)",
+    y = "Slope",
+    title = "Marginal Effects - 3-Month Lag NDOI")
+
+```
+
+```{r}
+
+# Conductivity
+
+plot_predictions(m3.1, condition = "logConductivity", points = 0.5) +
+      theme_classic(base_size = 12) +
+  labs(
+    x = "log(Conductivity)",
+    y = "log(Chlorophyll-a)",
+    title = "3-Month Lag")
+
+```
+
 ## Plot Marginal Effects
 
 ```{r}
@@ -524,6 +589,8 @@ lapply(var_list, function(x) {
   plot_slopes(m3.1, variables = x, condition = x)
 })
 ```
+
+
 
 # M4 Results {.tabset}
 
@@ -543,7 +610,7 @@ summary(m4.1)
 ## Plot Predictions
 
 ```{r echo=FALSE}
-var_list = list("logDissAmmonia", "lag3_logDissAmmonia", "logDissNitrateNitrite","lag3_logDissNitrateNitrite",  "logDissOrthophos","lag3_logDissOrthophos", "logConductivity", "lag3_logSAC", "clam_step")
+var_list = list("log(Dissolved Ammonia)"="logDissAmmonia", "lag3_logDissAmmonia", "logDissNitrateNitrite","lag3_logDissNitrateNitrite",  "logDissOrthophos","lag3_logDissOrthophos", "logConductivity", "lag3_logSAC", "clam_step")
 ```
 
 ```{r}

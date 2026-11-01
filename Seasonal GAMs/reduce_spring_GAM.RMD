@@ -1,20 +1,13 @@
 ---
-title:
+  title:
   "Reduce Spring GAMs"
 author:
   "Ryan Hankins"
 output: 
   rmdformats::html_clean:
-    lightbox: true
-    thumbnails: false
+  lightbox: true
+thumbnails: false
 ---
-# Starting models:
-
-Spring Model 
-
-Model 1: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:Exports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
-
-Model 2: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)  
 
 # Prepare Data {.tabset}
 
@@ -29,7 +22,6 @@ library(stats)
 library(mice)
 library(ggplot2)
 ```
-
 
 
 ```{r}
@@ -67,207 +59,460 @@ df$logSJR <- log(df$SJR)
 df <- df%>%mutate(clam_step=if_else(Year>1987, "post clam", "pre clam")) 
 df$clam_step <- as.factor(df$clam_step)
 df$Chlorophyll <- as.numeric(df$Chlorophyll)
+
+
+
+c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC", "logSAC", "EXPORT", "OUT", "logOUT", "SJR", "logSJR", "Index","lagIndex","DissAmmonia","logDissAmmonia","DissOrthophos","logDissOrthophos","DissNitrateNitrite","logDissNitrateNitrite","Temperature","Conductivity",  "logConductivity","clam_step")
+
+
+spr <- df %>% subset(select=c)
+
 ```
 
+## Remove outliers
+
+```{r}
+clean_df_z <- spr 
+
+clean_df_z$logDissAmmonia[abs(scale(clean_df_z$logDissAmmonia)) > 3.29] <- NA
+
+clean_df_z$logDissNitrateNitrite[abs(scale(clean_df_z$logDissNitrateNitrite)) > 3.29] <- NA
+
+clean_df_z$logDissOrthophos[abs(scale(clean_df_z$logDissOrthophos)) > 3.29] <- NA
+
+outliers_z <- anti_join(spr, clean_df_z)
+
+spr <- clean_df_z
+
+print(paste("rows changed:",nrow(outliers_z)))
+```
 ## add lag terms
+
 ```{r}
 # Create monthly lag terms
-df<- df %>% arrange(Year, Month) %>% mutate(across(c(DissAmmonia,logDissAmmonia,DissOrthophos,logDissOrthophos,DissNitrateNitrite,logDissNitrateNitrite,Temperature, Conductivity,logConductivity, SAC, logSAC, SJR, logSJR, EXPORT, OUT, logOUT),
-                                       ~ lag(.x, n = 1), 
-                                       .names = "lag{.col}_mo"))
-
-# Create seasonal lag terms for the log terms
-# This code is taken from clamdata_cleanup_AB_261125.R
-#Step 1: summarize by season 
-wq_r_sum_lagseason <- df %>%
-  group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
-
-#Step 2: Add a column for the following season.
-#This seems counter-intuitive because the lag should be the prior season,
-#but this is a merge column: it will merge back with the prior season
-#in the original table. 
-wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
-  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
-  rename_with(~paste0("lag",.x)) %>%
-  rename(Year = "lagYear",season = "lagseason", Regions="lagRegions") %>% 
-  mutate(lagseason = case_when(
-    season == "Spring" ~ "Spring",
-    season == "Spring" ~ "Autumn",
-    season == "Autumn" ~ "Winter",
-    season == "Winter" ~ "Spring" 
-  )) %>%
-  mutate(lagseasonyear = case_when(
-    season == "Autumn" ~ Year+1,
-    !(season == "Autumn") ~ Year
-  )) %>%
-  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
-  ungroup %>% 
-  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite, laglogDissOrthophos, laglogConductivity,
-         laglogSAC,laglogOUT, laglogSJR, laglogDissOrthophos, lagEXPORT)
+spr<- spr %>% arrange(Year, Month) %>% mutate(across(c(DissAmmonia,logDissAmmonia,DissOrthophos,logDissOrthophos,DissNitrateNitrite,logDissNitrateNitrite,Temperature, Conductivity,logConductivity, SAC, logSAC, SJR, logSJR, EXPORT, OUT, logOUT),
+                                                     ~ lag(.x, n = 1), 
+                                                     .names = "lag{.col}_mo"))
 
 
-df <- df %>% 
-  mutate(seasonyear = paste0(season,year(Date))) %>%
-  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
-  select(-seasonyear)%>%
-  relocate(Date)
+spr <- spr %>%
+  group_by(Regions) %>%
+  arrange(Regions, Date) %>%
+  # Make sure all dates are present for lag variables later on.
+  complete(Date = seq(min(Date), max(Date), by = "1 month")) %>%
+  # Lag all numeric columns by 3 rows
+  mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag{col}_3mo")) %>%
+  ungroup()
+
 
 ```
 
 ## make the final dataset
 
 ```{r}
-c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC","lagSAC", "lagSAC_mo", "logSAC", "laglogSAC","laglogSAC_mo", "EXPORT", "lagEXPORT", "lagEXPORT_mo", "OUT","lagOUT","lagOUT_mo", "logOUT", "laglogOUT", "laglogOUT_mo", "SJR", "lagSJR","lagSJR_mo","logSJR", "laglogSJR", "laglogSJR_mo", "Index","lagIndex","DissAmmonia","lagDissAmmonia","lagDissAmmonia_mo","logDissAmmonia","laglogDissAmmonia","laglogDissAmmonia_mo","DissOrthophos","lagDissOrthophos","logDissOrthophos","laglogDissOrthophos","laglogDissOrthophos_mo","DissNitrateNitrite","lagDissNitrateNitrite","logDissNitrateNitrite","laglogDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature","lagTemperature_mo","Conductivity",  "lagConductivity","lagConductivity_mo","logConductivity","laglogConductivity_mo","clam_step")
+# z-score
+spr <- spr %>% mutate(across(!c(Regions,season,Date,Month, Year, clam_step), ~as.vector(scale(.))))
 
-spr <- df %>% filter(season == "Spring")%>%subset(select=c)
+spr <- spr %>% filter(season == "Spring")
 ```
+
 
 # Reduce Spring Model
 
-## spr.1.test {.tabset}
-We are using the complete cases data set here.
-
-Model 1: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + s(Region:logSAC) + s(Region:logSJ)+ s(Region:Exports) + Pre/post-clam + s(Region:lag(logSAC)) + s(Region:lag(logSJ)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month)
+## spr.1
 
 ```{r cache = TRUE}
-spr.1.test <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + s(logSAC, by=Regions) + s(logSJR, by=Regions) + s(EXPORT, by=Regions) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=spr, method = 'ML', select=TRUE)
+spr.1 <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions) + s(logSJR) + s(logSJR, by=Regions) + s(EXPORT) + s(EXPORT, by=Regions) + s(laglogSAC_mo) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(laglogDissNitrateNitrite_mo), data=spr, method = 'ML', select=TRUE)
 ```
+
 ### summary 
 
 ```{r}
-summary(spr.1.test)
+summary(spr.1)
 ```
+
 
 ### GAM Check
 ```{r}
-gam.check(spr.1.test)
+gam.check(spr.1)
 ```
 
-Notes:
-edf close to 0: Temperature, Month
+
+### Concurvity
+
+```{r}
+concurvity(spr.1, full = FALSE)
+?concurvity
+```
+### Plot Predictions
+
+```{r}
+c = c("logDissAmmonia","laglogDissAmmonia_mo","logDissOrthophos","laglogDissOrthophos_mo","laglogDissNitrateNitrite_mo","laglogDissNitrateNitrite_mo","Temperature","lagTemperature_mo","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+  
+```{r}
+c = c("logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_mo", "Index","lagIndex")
+lapply(c, function(x) {
+  plot_predictions(spr.1, condition = c(x,"Regions"), points = 0.5) +
+    theme_classic(base_size = 12)
+})
+```
+
+## spr.1.3molag
+
+```{r  cache = TRUE}
+spr.1.3molag <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions) + s(logSJR) + s(logSJR, by=Regions) + s(EXPORT) + s(EXPORT, by=Regions) + s(laglogSAC_3mo) + s(laglogSAC_3mo, by=Regions) + s(laglogSJR_3mo) + s(laglogSJR_3mo, by=Regions) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo) + s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
+```
+
+### summary 
+
+```{r}
+summary(spr.1.3molag)
+```
+
+
+### GAM Check
+```{r}
+gam.check(spr.1.3molag)
+```
+
 
 ### Plot Predictions
 
 ```{r}
-c = c("logDissAmmonia","laglogDissAmmonia_mo","logDissOrthophos","laglogDissOrthophos_mo","logDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature_mo","laglogConductivity_mo","clam_step","Month")
+c = c("logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","laglogDissNitrateNitrite_3mo","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","logConductivity","clam_step", "Index","lagIndex", "logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_mo")
 lapply(c, function(x) {
-  plot_predictions(spr.1.test, x , points = .5) +
+  plot_predictions(spr.1.3molag, x , points = .5) +
     theme_classic(base_size = 12)
 })
 
 ```
-Terms with regional interactions:
+
 
 ```{r}
-c = c("logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_mo", "Index","lagIndex","logConductivity")
+c = c("logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_mo")
 lapply(c, function(x) {
-    plot_predictions(spr.1.test, condition = c(x,"Regions"), points = 0.5) +
-      theme_classic(base_size = 12)
+  plot_predictions(spr.1.3molag, condition = c(x,"Regions"), points = 0.5) +
+    theme_classic(base_size = 12)
 })
 ```
 
-## spr.2.test {.tabset}
+### Concurvity
 
-Model 2: Spring Chla ~ s(logNH4) + s(logPO4) + s(log(NO2+NO3)) + s(temperature) + s(logconductivity) + Sac Valley index + previous year(Sac Valley index) + Pre/post-clam + s(lag(logNDOI)) + s(Region:log(NDOI)) + lag(logNH4) + s(lag(PO4)) + s(lag(logNO2+NO3)) + (1|Month) 
+```{r}
+concurvity(spr.1.3molag, full=FALSE)
+```
+
+## spr.1.SAC
 
 ```{r cache=TRUE}
-
-spr.2.test <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=spr, method = 'ML', select=TRUE)
+spr.1.SAC <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions) + s(laglogSAC_3mo) + s(laglogSAC_3mo, by=Regions) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo)+ s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
 ```
 
 ### summary 
 
 ```{r}
-summary(spr.2.test)
+summary(spr.1.SAC)
 ```
 
 
 ### GAM Check
 ```{r}
-gam.check(spr.2.test)
+gam.check(spr.1.SAC)
 ```
-Notes:
-- edf close to 0: logDissOrthophos, Temperature, laglogDissNitrateNitrite_mo, Month
 
-### Plot predicitons
+
+### Plot Predictions
 
 ```{r}
-c = c( "logDissAmmonia","laglogDissAmmonia","logDissOrthophos","laglogDissOrthophos_mo","logDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature_mo","laglogConductivity_mo","clam_step", "Month")
+c = c("logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","laglogDissNitrateNitrite_3mo","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","logConductivity","clam_step")
 lapply(c, function(x) {
-  plot_predictions(spr.2.test, x , points = .5) +
+  plot_predictions(spr.1.SAC, x , points = .5) +
     theme_classic(base_size = 12)
 })
 
 ```
-Terms with regional interactions:
+
 
 ```{r}
-c = c("logOUT",  "laglogOUT_mo", "Index","lagIndex","logConductivity")
+c = c("logSAC", "laglogSAC_3mo", "Index","lagIndex")
 lapply(c, function(x) {
-    plot_predictions(spr.1.test, condition = c(x,"Regions"), points = 0.5) +
-      theme_classic(base_size = 12)
+  plot_predictions(spr.1.SAC, condition = c(x,"Regions"), points = 0.5) +
+    theme_classic(base_size = 12)
 })
 ```
-## AIC/BIC
-notes: spr_1_test performs better based on both AIC and BIC
 
-AIC
-```{r}
-AIC(spr.1.test,spr.2.test)
-```
-BIC
-```{r}
-BIC(spr.1.test, spr.2.test)
+## spr.1.SJR
+
+```{r cache=TRUE}
+spr.1.SJR <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSJR) + s(logSJR, by=Regions)  + s(laglogSJR_3mo) + s(laglogSJR_3mo, by=Regions) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo)+ s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
 ```
 
-# Run reduced Spring models
+### summary 
 
-
-## spr.1 {.tabset}
-
-running spr.1 without Temperature
-
-```{r cache = TRUE}
-spr.1. <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite)  + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + s(logSAC, by=Regions) + s(logSJR, by=Regions) + s(EXPORT, by=Regions) + s(laglogSAC_mo, by=Regions) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo) + s(Month, bs="re"), data=spr, method = 'ML', select=TRUE)
+```{r}
+summary(spr.1.SJR)
 ```
 
 
 ### GAM Check
+
 ```{r}
-gam.check(spr.1.)
+gam.check(spr.1.SJR)
 ```
-### Summary
+
+### Plot Predictions
+
 ```{r}
-summary(spr.1.)
+c = c("logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","laglogDissNitrateNitrite_3mo","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SJR, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+  
+```{r}
+c = c("logSJR", "laglogSJR_3mo", "Index","lagIndex")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SJR, condition = c(x,"Regions"), points = 0.5) +
+    theme_classic(base_size = 12)
+})
+```
+
+## spr.1.SAC.EXPORT.1molag
+
+```{r  cache = TRUE}
+spr.1.SAC.EXPORT.1molag <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions)  + s(EXPORT) + s(EXPORT, by=Regions)  + s(lagEXPORT_mo) + s(lagEXPORT_mo, by=Regions) + s(laglogSAC_mo) + s(laglogSAC_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(laglogDissNitrateNitrite_mo), data=spr, method = 'ML', select=TRUE)
+```
+
+
+### summary 
+
+```{r}
+summary(spr.1.SAC.EXPORT.1molag)
+```
+
+### GAM Check
+
+```{r}
+gam.check(spr.1.SAC.EXPORT.1molag)
+```
+
+### Plot Predictions
+
+```{r}
+c = c("logDissAmmonia","laglogDissAmmonia_mo","logDissOrthophos","laglogDissOrthophos_mo","laglogDissNitrateNitrite_mo","laglogDissNitrateNitrite_mo","Temperature","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SAC.EXPORT.1molag, x , points = .5) +
+    theme_classic(base_size = 12)})
+  
+```
+
+## spr.1.SAC.EXPORT
+
+```{r  cache = TRUE}
+spr.1.SAC.EXPORT <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSAC) + s(logSAC, by=Regions)  + s(EXPORT) + s(EXPORT, by=Regions) + s(lagEXPORT_3mo) + s(lagEXPORT_3mo, by=Regions) + s(laglogSAC_3mo) + s(laglogSAC_3mo, by=Regions) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo) + s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
+```
+
+### summary 
+
+```{r}
+summary(spr.1.SAC.EXPORT)
+```
+
+### GAM Check
+
+```{r}
+gam.check(spr.1.SAC.EXPORT)
+```
+
+### Plot Predictions
+
+```{r}
+c = c("logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","laglogDissNitrateNitrite_3mo","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SAC.EXPORT, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+
+```{r}
+c = c("logSAC", "laglogSAC_mo", "EXPORT","lagEXPORT_3mo","Index","lagIndex")
+lapply(c, function(x) {
+    plot_predictions(spr.1.SAC.EXPORT, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+## spr.1.SJR.EXPORT
+
+```{r  cache = TRUE}
+spr.1.SJR.EXPORT <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSJR) + s(logSJR, by=Regions)  + s(EXPORT) + s(EXPORT, by=Regions) + s(lagEXPORT_3mo) + s(lagEXPORT_3mo, by=Regions) + s(laglogSJR_3mo) + s(laglogSJR_3mo, by=Regions) + clam_step + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo) + s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
+```
+
+### summary 
+
+```{r}
+summary(spr.1.SJR.EXPORT)
+```
+
+### GAM Check
+
+```{r}
+gam.check(spr.1.SJR.EXPORT)
+```
+
+### Plot Predictions
+
+```{r cache = TRUE}
+c = c("logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","laglogDissNitrateNitrite_3mo","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SJR.EXPORT, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+
+```{r}
+c = c("EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_3mo", "Index","lagIndex")
+lapply(c, function(x) {
+    plot_predictions(spr.1.SJR.EXPORT, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+## spr.1.SJR.EXPORT.1molag
+
+```{r  cache = TRUE}
+spr.1.SJR.EXPORT.1molag <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + s(logSJR) + s(logSJR, by=Regions)  + s(EXPORT) + s(EXPORT, by=Regions) + s(lagEXPORT_mo) + s(lagEXPORT_mo, by=Regions)+s(laglogSJR_mo) + s(laglogSJR_mo, by=Regions) + clam_step + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(laglogDissNitrateNitrite_mo), data=spr, method = 'ML', select=TRUE)
+```
+
+### summary 
+
+```{r}
+summary(spr.1.SJR.EXPORT.1molag)
+```
+
+### GAM Check
+
+```{r}
+gam.check(spr.1.SJR.EXPORT.1molag)
+```
+
+### Plot Predictions
+
+```{r cache = TRUE}
+c = c("logDissAmmonia","laglogDissAmmonia_mo","logDissOrthophos","laglogDissOrthophos_mo","laglogDissNitrateNitrite_mo","laglogDissNitrateNitrite_mo","Temperature","logConductivity","clam_step")
+lapply(c, function(x) {
+  plot_predictions(spr.1.SJR.EXPORT.1molag, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
+```
+
+
+```{r}
+c = c("EXPORT","lagEXPORT_mo", "logSJR", "laglogSJR_3mo", "Index","lagIndex")
+lapply(c, function(x) {
+    plot_predictions(spr.1.SJR.EXPORT.1molag, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
 ```
 
 ## spr.2 {.tabset}
 
-running spr.2 without logDissOrthophos, Temperature, laglogDissNitrateNitrite_mo
+```{r cache=TRUE}
 
-```{r cache = TRUE}
-
-spr.2<- gam(logchla ~ s(logDissAmmonia) +  + s(logDissNitrateNitrite)  + s(logConductivity, by=Regions) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo) + s(Month, bs="re"), data=spr, method = 'ML', select=TRUE)
+spr.2 <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) + s(laglogOUT_mo) + s(laglogOUT_mo,by=Regions) + s(laglogDissAmmonia_mo) + s(laglogDissOrthophos_mo)+ s(laglogDissNitrateNitrite_mo), data=spr, method = 'ML', select=TRUE)
 ```
 
-### GAM Check
-```{r}
-gam.check(spr.2)
-```
+### summary 
 
-### Summary
 ```{r}
 summary(spr.2)
 ```
 
-## Compare AIC/BIC of all Spring models 
+## spr.2.3molag {.tabset}
+
+```{r cache=TRUE}
+
+spr.2.3molag <- gam(logchla ~ s(logDissAmmonia) + s(logDissOrthophos) + s(logDissNitrateNitrite) + s(Temperature) + s(logConductivity) + s(Index) + s(lagIndex) + clam_step + s(logOUT) + s(logOUT, by = Regions) +  s(laglogOUT_3mo) + s(laglogOUT_3mo, by = Regions) + s(laglogDissAmmonia_3mo) + s(laglogDissOrthophos_3mo)+ s(laglogDissNitrateNitrite_3mo), data=spr, method = 'ML', select=TRUE)
+```
+
+### summary 
 
 ```{r}
-AIC(spr.1.test,spr.1.,spr.2.test, spr.2)
+summary(spr.2.3molag)
+```
+
+### GAM Check
+```{r}
+gam.check(spr.2.3molag)
+```
+
+### Plot predicitons
+
+```{r}
+c = c( "logDissAmmonia","laglogDissAmmonia_3mo","logDissOrthophos","laglogDissOrthophos_3mo","logDissNitrateNitrite","laglogDissNitrateNitrite_3mo","Temperature","lagTemperature_3mo","laglogConductivity_3mo","clam_step","logConductivity")
+lapply(c, function(x) {
+  plot_predictions(spr.2.3molag, x , points = .5) +
+    theme_classic(base_size = 12)
+})
+
 ```
 
 ```{r}
-BIC(spr.1.test,spr.1.,spr.2.test, spr.2)
+c = c("logOUT", "laglogOUT_3mo", "Index","lagIndex")
+lapply(c, function(x) {
+    plot_predictions(spr.2.3molag, condition = c(x,"Regions"), points = 0.5) +
+      theme_classic(base_size = 12)
+})
+```
+
+## AIC/BIC
+
+AIC
+```{r}
+aic_all <- AIC(spr.1, spr.1.3molag, spr.1.SAC, spr.1.SJR, spr.1.SAC.EXPORT, spr.1.SJR.EXPORT, spr.2, spr.2.3molag, spr.1.SJR.EXPORT.1molag, spr.1.SAC.EXPORT.1molag)
+```
+BIC
+```{r}
+bic_all <- BIC(spr.1, spr.1.3molag, spr.1.SAC, spr.1.SJR, spr.1.SAC.EXPORT, spr.1.SJR.EXPORT, spr.2, spr.2.3molag, spr.1.SJR.EXPORT.1molag, spr.1.SAC.EXPORT.1molag)
+```
+
+This table ranks the models by their AIC and shows the difference in AIC/BIC values of each model from the lowest AIC/BIC of all models. The code is taken from here: https://interagencyecologicalprogram.github.io/ND-FASTR/rtm_chl_models_flow_weekly_avg.html#Purpose 
+
+m6.po4 and m4.po4 look to be performing the best
+
+```{r}
+# AIC values
+aic_all_t <- aic_all %>%
+  as_tibble(rownames = "Model") %>%
+  mutate(Model_Number = 1:10, .before = Model)
+
+# BIC values
+bic_all_t <- bic_all %>%
+  as_tibble(rownames = "Model")
+
+# Combine AIC and BIC and calculate differences from lowest value
+aic_bic_all <-
+  left_join(aic_all_t, bic_all_t, by = join_by(Model, df)) %>%
+  mutate(across(c(AIC, BIC), ~ .x - min(.x), .names = "{.col}_delta")) %>%
+  select(starts_with("Model"), df, starts_with("AIC"), starts_with("BIC"))
+
+# Sort by AIC
+aic_bic_all %>% arrange(AIC)
+
 ```
 

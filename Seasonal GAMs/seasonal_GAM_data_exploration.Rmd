@@ -75,54 +75,69 @@ df$Chlorophyll <- as.numeric(df$Chlorophyll)
 
 ## add lag terms
 ```{r}
-# Create monthly lag terms
+# # Create monthly lag terms
 df<- df %>% arrange(Year, Month) %>% mutate(across(c(DissAmmonia,logDissAmmonia,DissOrthophos,logDissOrthophos,DissNitrateNitrite,logDissNitrateNitrite,Temperature, Conductivity,logConductivity, SAC, logSAC, SJR, logSJR, EXPORT, OUT, logOUT, Index),
-                                       ~ lag(.x, n = 1), 
+                                       ~ lag(.x, n = 1),
                                        .names = "lag{.col}_mo"))
+# 
+# # Create seasonal lag terms for the log terms
+# # This code is taken from clamdata_cleanup_AB_261125.R
+# #Step 1: summarize by season 
+# wq_r_sum_lagseason <- df %>%
+#   group_by(Regions,Year,season) %>%
+#   summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
+# 
+# #Step 2: Add a column for the following season.
+# #This seems counter-intuitive because the lag should be the prior season,
+# #but this is a merge column: it will merge back with the prior season
+# #in the original table. 
+# wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
+#   select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
+#   rename_with(~paste0("lag",.x)) %>%
+#   rename(Year = "lagYear",season = "lagseason", Regions="lagRegions") %>% 
+#   mutate(lagseason = case_when(
+#     season == "Spring" ~ "Summer",
+#     season == "Summer" ~ "Autumn",
+#     season == "Autumn" ~ "Winter",
+#     season == "Winter" ~ "Spring" 
+#   )) %>%
+#   mutate(lagseasonyear = case_when(
+#     season == "Autumn" ~ Year+1,
+#     !(season == "Autumn") ~ Year
+#   )) %>%
+#   mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
+#   ungroup %>% 
+#   select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite, laglogDissOrthophos, laglogConductivity,
+#          laglogSAC,laglogOUT, laglogSJR, laglogDissOrthophos, lagEXPORT)
+# 
+# 
+# df <- df %>% 
+#   mutate(seasonyear = paste0(season,year(Date))) %>%
+#   merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
+#   select(-seasonyear)%>%
+#   relocate(Date)
 
-# Create seasonal lag terms for the log terms
-# This code is taken from clamdata_cleanup_AB_261125.R
-#Step 1: summarize by season 
-wq_r_sum_lagseason <- df %>%
-  group_by(Regions,Year,season) %>%
-  summarize(across(where(is.numeric),\(x) mean(x, na.rm = TRUE)), .groups="drop_last")
-
-#Step 2: Add a column for the following season.
-#This seems counter-intuitive because the lag should be the prior season,
-#but this is a merge column: it will merge back with the prior season
-#in the original table. 
-wq_r_sum_lagseason <- wq_r_sum_lagseason %>%
-  select(!c(lagOUT,lagSAC,lagTemperature,lagDissAmmonia,lagDissNitrateNitrite, lagTotPhos,lagConductivity,lagDissOrthophos))%>%
-  rename_with(~paste0("lag",.x)) %>%
-  rename(Year = "lagYear",season = "lagseason", Regions="lagRegions") %>% 
-  mutate(lagseason = case_when(
-    season == "Spring" ~ "Summer",
-    season == "Summer" ~ "Autumn",
-    season == "Autumn" ~ "Winter",
-    season == "Winter" ~ "Spring" 
-  )) %>%
-  mutate(lagseasonyear = case_when(
-    season == "Autumn" ~ Year+1,
-    !(season == "Autumn") ~ Year
-  )) %>%
-  mutate(lagseasonyear = paste0(lagseason,lagseasonyear)) %>%
-  ungroup %>% 
-  select(lagseasonyear, Regions, laglogDissAmmonia,laglogDissNitrateNitrite, laglogDissOrthophos, laglogConductivity,
-         laglogSAC,laglogOUT, laglogSJR, laglogDissOrthophos, lagEXPORT)
+#  Create the 3 month lag
 
 
-df <- df %>% 
-  mutate(seasonyear = paste0(season,year(Date))) %>%
-  merge(wq_r_sum_lagseason,by.x=c("Regions","seasonyear"),by.y=c("Regions","lagseasonyear"),all.x=T) %>%
-  select(-seasonyear)%>%
-  relocate(Date)
+df <- df %>%
+    # Group by region so completion happens independently per region
+  group_by(Regions) %>%
+    
+    # Sort chronologically within each group
+  arrange(Regions, Date) %>%
+    
+    # Lag all numeric columns by 3 rows
+  mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag3_{col}")) %>%
+
+  ungroup()
 
 ```
 
 ## make the final dataset
 
 ```{r}
-c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC","lagSAC", "lagSAC_mo", "logSAC", "laglogSAC","laglogSAC_mo", "EXPORT", "lagEXPORT", "lagEXPORT_mo", "OUT","lagOUT","lagOUT_mo", "logOUT", "laglogOUT", "laglogOUT_mo", "SJR", "lagSJR","lagSJR_mo","logSJR", "laglogSJR", "laglogSJR_mo", "Index","lagIndex","DissAmmonia","lagDissAmmonia","lagDissAmmonia_mo","logDissAmmonia","laglogDissAmmonia","laglogDissAmmonia_mo","DissOrthophos","lagDissOrthophos","logDissOrthophos","laglogDissOrthophos","laglogDissOrthophos_mo","DissNitrateNitrite","lagDissNitrateNitrite","logDissNitrateNitrite","laglogDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lagTemperature","lagTemperature_mo","Conductivity",  "lagConductivity","lagConductivity_mo","logConductivity","laglogConductivity_mo","clam_step")
+c = c("logchla", "season", "Regions", "Date","Year", "Month","SAC","lag3_SAC", "lagSAC_mo", "logSAC", "lag3_logSAC","laglogSAC_mo", "EXPORT", "lag3_EXPORT", "lagEXPORT_mo", "OUT","lag3_OUT","lagOUT_mo", "logOUT", "lag3_logOUT", "laglogOUT_mo", "SJR", "lag3_SJR","lagSJR_mo","logSJR", "lag3_logSJR", "laglogSJR_mo", "Index","lagIndex","DissAmmonia","lag3_DissAmmonia","lagDissAmmonia_mo","logDissAmmonia","lag3_logDissAmmonia","laglogDissAmmonia_mo","DissOrthophos","lag3_DissOrthophos","logDissOrthophos","lag3_logDissOrthophos","laglogDissOrthophos_mo","DissNitrateNitrite","lag3_DissNitrateNitrite","logDissNitrateNitrite","lag3_logDissNitrateNitrite","laglogDissNitrateNitrite_mo","Temperature","lag3_Temperature","lagTemperature_mo","Conductivity",  "lag3_Conductivity","lagConductivity_mo","logConductivity","laglogConductivity_mo","clam_step")
 
 df <- df %>% subset(select=c)
 
@@ -154,7 +169,7 @@ corrplot(m,
          method = "color",
          type = "upper",
          addCoef.col = "black",
-         number.cex = 0.25,
+         number.cex = 0.5,
          number.digits=2,
          tl.cex =0.45,
          tl.col = "black")
