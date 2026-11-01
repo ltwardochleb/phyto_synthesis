@@ -627,7 +627,7 @@ flow_vars <- c(
 
 df_flow_plot <- df_mvi %>%
   group_by(Date, Region) %>%
-  summarise(
+  summarize(
     n = n(),
     n_HAB = sum(mvi_class == 'No bloom'),
     across(all_of(flow_vars), first),
@@ -651,7 +651,7 @@ df_flow_plot <- df_mvi %>%
   group_by(Region, Flow, Lag) %>%
   mutate(Flow_quartile = ntile(log_flow, 4)) %>%
   group_by(Region, Flow, Lag, Flow_quartile) %>%
-  summarise(
+  summarize(
     n = sum(n),
     n_HAB = sum(n_HAB),
     n_dates = n_distinct(Date),
