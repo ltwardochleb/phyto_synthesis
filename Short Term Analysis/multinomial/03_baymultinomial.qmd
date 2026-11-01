@@ -1,0 +1,680 @@
+# Read in Data
+
+```{r}
+library(tidyverse)
+library(here)
+library(nnet)
+library(mgcv)
+library(car)
+library(brms)
+library(DHARMa)
+library(corrplot)
+library(sandwich)
+library(lmerTest)
+library(lme4)
+library(nnet)
+
+options(contrasts = c('contr.sum', 'contr.poly'))
+
+
+stan_dir <- 'C:/Users/sperry/Coding/stan_models'
+options(cmdstanr_write_stan_file_dir = stan_dir)
+
+load(here::here('Short Term Analysis/st_data/05_transforms.Rda'))
+```
+
+```{r}
+build_variance_components <- function(df, station_vars){#, region_time_vars) {
+
+  # WITHIN RT (region-month-year)
+  df <- df %>%
+    group_by(Region, region_time) %>%
+    mutate(
+      across(
+        all_of(station_vars),
+        list(
+          rt_mean = ~ mean(.x, na.rm = TRUE),   # region-time mean (Xbar_rt)
+          within_rt = ~ .x - mean(.x, na.rm = TRUE) # dev per station (d_srt)
+        ),
+        .names = '{.col}_{.fn}'
+      )
+    ) %>%
+    ungroup()
+
+  # BETWEEN REGION (regional mean)
+  rt_mean_vars <- paste0(station_vars, '_rt_mean')
+
+  region_means <- df %>%
+    distinct(
+      Region,
+      region_time,
+      across(all_of(rt_mean_vars))
+    ) %>%
+    group_by(Region) %>%
+    summarize(
+      across(
+        all_of(rt_mean_vars),
+        ~ mean(.x, na.rm = TRUE),  # regional mean (Xbar_r)
+        .names = '{.col}_bw_region'
+      ),
+      .groups = 'drop'
+    ) %>%
+    rename_with(
+      ~ sub('_rt_mean_bw_region$', '_bw_region', .x)
+    )
+
+  df <- df %>%
+    left_join(region_means, by = 'Region')
+
+  # OVER RT (d_rt = Xbar_rt - Xbar_r)
+  for (v in station_vars) {
+    df[[paste0(v, '_over_rt')]] <-
+      df[[paste0(v, '_rt_mean')]] -
+      df[[paste0(v, '_bw_region')]]
+  }
+
+  # REGION-TIME VARS (already at rt level; no within-rt, has over_rt/bw_region)
+  # region_time_bw <- df %>%
+  #   distinct(Region, region_time, across(all_of(region_time_vars))) %>%
+  #   group_by(Region) %>%
+  #   summarize(
+  #     across(
+  #       all_of(region_time_vars),
+  #       ~ mean(.x, na.rm = TRUE),
+  #       .names = '{.col}_bw_region'
+  #     ),
+  #     .groups = 'drop'
+  #   )
+  # 
+  # df <- df %>%
+  #   left_join(region_time_bw, by = 'Region')
+  # 
+  # for (v in region_time_vars) {
+  #   df[[paste0(v, '_over_rt')]] <-
+  #     df[[v]] - df[[paste0(v, '_bw_region')]]
+  # }
+
+  df
+}
+```
+
+```{r}
+# calc weighted (due to repeated stations) variance
+wvar <- function(x, w) {
+  keep <- !is.na(x) & !is.na(w)
+  x <- x[keep]
+  w <- w[keep]
+  mu <- weighted.mean(x, w)
+  weighted.mean((x - mu)^2, w)
+}
+
+calc_variance_decomp <- function(v, df) {
+  within_col <- paste0(v, '_within_rt')
+  over_col <- paste0(v, '_over_rt')
+  bw_col <- paste0(v, '_bw_region')
+  
+  has_within <- within_col %in% names(df)
+  required_cols <- c(v, over_col, bw_col, if (has_within) within_col)
+  
+  tmp <- df %>%
+    filter(if_all(all_of(required_cols), ~ !is.na(.))) %>%
+    group_by(Region, region_time) %>%
+    mutate(wt = 1 / n()) %>%
+    ungroup()
+  
+  total_var <- wvar(tmp[[v]], tmp$wt)
+  var_over <- wvar(tmp[[over_col]], tmp$wt)
+  var_between <- wvar(tmp[[bw_col]], tmp$wt)
+  var_within <- if (has_within) wvar(tmp[[within_col]], tmp$wt) else 0
+  
+  data.frame(
+    variable = v,
+    perc_within_rt = if (has_within) (var_within / total_var) * 100 else NA,
+    perc_over_rt = (var_over / total_var) * 100,
+    perc_bw_region = (var_between / total_var) * 100,
+    perc_sum = ((var_within + var_over + var_between) / total_var) * 100
+  ) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2)))
+}
+
+```
+
+
+# BAB vs No Bloom
+
+## All Dates
+
+```{r}
+# VARIABLES
+
+station_vars <- c(
+  'Temperature',
+  'log_DIN',
+  'log_DissAmmonia',
+  'log_DissNitrateNitrite',
+  'log_DIN_lag',
+  'log_DissAmmonia_lag',
+  'log_DissNitrateNitrite_lag',
+  'log_DIN_lag3',
+  'log_DissAmmonia_lag3',
+  'log_DissNitrateNitrite_lag3',
+  'log_DissSilica',
+  'log_DissSilica_lag',
+  'log_DissSilica_lag3',
+  'log_DissOrthophos',
+  'log_DissOrthophos_lag',
+  'log_DissOrthophos_lag3',
+  'log_Turbidity_lag',
+  'log_Conductivity'
+)
+
+# region_time_vars <- c(
+#   'log_graze_rate'
+# )
+
+delta_time_vars <- c(
+  'log_SAC',
+  'log_SJR',
+  'log_EXPORTS',
+  'log_OUT',
+  'log_SAC_lag3',
+  'log_SJR_lag3',
+  'log_EXPORTS_lag3',
+  'log_OUT_lag3'
+)
+
+# DATA
+
+# No Bloom: 0; BAB: 1
+df_bab <- df_mvi %>%
+  filter(mvi_class != 'HAB') %>%
+  mutate(
+    BAB = as.integer(mvi_class == 'BAB')
+  )
+
+df_bab <- build_variance_components(df_bab, station_vars)#, region_time_vars)
+```
+
+```{r}
+df_subset <- df_bab %>%
+  mutate(
+    doy = lubridate::yday(Date),
+    doy_c = 2 * pi * (doy - 1) / 365.25,
+    doy_sin_z = as.numeric(scale(sin(doy_c))),
+    doy_cos_z = as.numeric(scale(cos(doy_c)))
+  )
+
+m_bab_af <- brm(
+  BAB ~ doy_sin_z + doy_cos_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region * (
+      log_SAC + log_SJR + log_EXPORTS +
+      log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
+    ) +
+    log_DIN_lag_over_rt +
+    log_DIN_lag3_over_rt +
+    log_DissSilica_lag_over_rt +
+    log_DissSilica_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | Date),
+  
+  data = df_subset,
+  family = bernoulli('logit'),
+  
+  prior = c(
+    prior(normal(0, 1), class = 'b'),
+    prior(normal(0, 2.5), class = 'Intercept'),
+    prior(exponential(1), class = 'sd')
+  ),
+  
+  chains = 4,
+  iter = 1000,
+  warmup = 500,
+  cores = 4,
+  backend = 'rstan',
+  seed = 42
+)
+
+summary(m_bab_af)
+```
+
+```{r}
+plot(m_bab_af, ask = FALSE)
+```
+
+```{r}
+pp_check(m_bab_af, type = 'bars')
+
+pp_check(m_bab_af, type = 'bars_grouped', group = 'Region')
+```
+
+```{r}
+res <- simulateResiduals(
+  fittedModel = m_bab_af,
+  n = 250
+)
+
+plot(res)
+```
+
+
+```{r}
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Confluence')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Suisun Bay')
+```
+
+# HAB vs No Bloom
+
+```{r}
+# No Bloom: 0; HAB: 1
+df_hab <- df_mvi %>%
+  filter(mvi_class != 'BAB') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  ) %>%
+  filter(Region != 'Suisun Bay')
+
+df_hab <- build_variance_components(df_hab, station_vars)#, region_time_vars)
+```
+
+## All Dates
+
+```{r}
+df_subset_hab <- df_hab %>%
+  mutate(
+    doy = lubridate::yday(Date),
+    doy_c = 2 * pi * (doy - 1) / 365.25,
+    doy_sin_z = as.numeric(scale(sin(doy_c))),
+    doy_cos_z = as.numeric(scale(cos(doy_c)))
+  )
+
+m_hab_af <- brm(
+  HAB ~ doy_sin_z + doy_cos_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region * (
+      log_SAC + log_SJR + log_EXPORTS +
+      log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
+    ) +
+    log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | Date),
+  
+  data = df_subset_hab,
+  family = bernoulli('logit'),
+  
+  prior = c(
+    prior(normal(0, 1), class = 'b'),
+    prior(normal(0, 2.5), class = 'Intercept'),
+    prior(exponential(1), class = 'sd')
+  ),
+  
+  chains = 4,
+  iter = 1000,
+  warmup = 500,
+  cores = 4,
+  backend = 'rstan',
+  seed = 42
+)
+
+summary(m_hab_af)
+```
+
+```{r}
+plot(m_hab_af, ask = FALSE)
+```
+
+```{r}
+pp_check(m_hab_af, type = 'bars')
+
+pp_check(m_hab_af, type = 'bars_grouped', group = 'Region')
+```
+
+```{r}
+res <- simulateResiduals(
+  fittedModel = m_hab_af,
+  n = 250
+)
+
+plot(res)
+```
+
+
+```{r}
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Confluence')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Suisun Bay')
+```
+
+## Subset Dates
+
+```{r}
+df_subset_habtime <- df_subset_hab %>%
+  filter(Month %in% 6:10)
+
+m_hab_afsub <- brm(
+  HAB ~ doy_sin_z + doy_cos_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region * (
+      log_SAC + log_SJR + log_EXPORTS +
+      log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
+    ) +
+    log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | Date),
+  
+  data = df_subset_habtime,
+  family = bernoulli('logit'),
+  
+  prior = c(
+    prior(normal(0, 1), class = 'b'),
+    prior(normal(0, 2.5), class = 'Intercept'),
+    prior(exponential(1), class = 'sd')
+  ),
+  
+  chains = 4,
+  iter = 1000,
+  warmup = 500,
+  cores = 4,
+  backend = 'rstan',
+  seed = 42
+)
+
+summary(m_hab_afsub)
+```
+```{r}
+plot(m_hab_afsub, ask = FALSE)
+```
+
+```{r}
+pp_check(m_hab_afsub, type = 'bars')
+
+pp_check(m_hab_afsub, type = 'bars_grouped', group = 'Region')
+```
+
+```{r}
+res <- simulateResiduals(
+  fittedModel = m_hab_afsub,
+  n = 250
+)
+
+plot(res)
+```
+
+
+```{r}
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Confluence')
+```
+
+# HAB vs BAB
+
+```{r}
+# DATA
+
+# BAB: 0; HAB: 1
+df_hbab <- df_mvi %>%
+  filter(mvi_class != 'No Bloom') %>%
+  mutate(
+    HAB = as.integer(mvi_class == 'HAB')
+  ) %>%
+  filter(Region != 'Suisun Bay')
+
+df_hbab <- build_variance_components(df_hbab, station_vars)#, region_time_vars)
+```
+
+```{r}
+df_hbab %>%
+  count(HAB) %>%
+  mutate(
+    percent = 100 * n / sum(n)
+  )
+```
+
+
+```{r}
+# variance_check <- lapply(c(station_vars), calc_variance_decomp, df = df_wsb) %>%
+#   dplyr::bind_rows()
+# 
+# variance_check
+```
+
+## All Dates
+
+```{r}
+df_subset_hbab <- df_hbab %>%
+  mutate(
+    doy = lubridate::yday(Date),
+    doy_c = 2 * pi * (doy - 1) / 365.25,
+    doy_sin_z = as.numeric(scale(sin(doy_c))),
+    doy_cos_z = as.numeric(scale(cos(doy_c)))
+  )
+
+m_hbab_af <- brm(
+  HAB ~ doy_sin_z + doy_cos_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region * (
+      log_SAC + log_SJR + log_EXPORTS +
+      log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
+    ) +
+    log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | Date),
+  
+  data = df_subset_hbab,
+  family = bernoulli('logit'),
+  
+  prior = c(
+    prior(normal(0, 1), class = 'b'),
+    prior(normal(0, 2.5), class = 'Intercept'),
+    prior(exponential(1), class = 'sd')
+  ),
+  
+  chains = 4,
+  iter = 1000,
+  warmup = 500,
+  cores = 4,
+  backend = 'rstan',
+  seed = 42
+)
+
+summary(m_hbab_af)
+```
+
+```{r}
+plot(m_hbab_af, ask = FALSE)
+```
+
+```{r}
+pp_check(m_hbab_af, type = 'bars')
+
+pp_check(m_hbab_af, type = 'bars_grouped', group = 'Region')
+```
+
+```{r}
+res <- simulateResiduals(
+  fittedModel = m_hbab_af,
+  n = 250
+)
+
+plot(res)
+```
+
+
+```{r}
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Confluence')
+```
+
+## Subset Dates
+
+```{r}
+df_subset_hbabtime <- df_subset_hbab %>%
+  filter(Month %in% 6:10)
+
+m_hbab_afsub <- brm(
+  HAB ~ doy_sin_z + doy_cos_z +
+    Temperature_over_rt +
+    log_Turbidity_lag_within_rt +
+    Region * (
+      log_SAC + log_SJR + log_EXPORTS +
+      log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
+    ) +
+    log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag3_within_rt +
+    (1 | Date),
+  
+  data = df_subset_hbabtime,
+  family = bernoulli('logit'),
+  
+  prior = c(
+    prior(normal(0, 1), class = 'b'),
+    prior(normal(0, 2.5), class = 'Intercept'),
+    prior(exponential(1), class = 'sd')
+  ),
+  
+  chains = 4,
+  iter = 1000,
+  warmup = 500,
+  cores = 4,
+  backend = 'rstan',
+  seed = 42
+)
+
+summary(m_hbab_afsub)
+```
+
+```{r}
+plot(m_hbab_afsub, ask = FALSE)
+```
+
+```{r}
+pp_check(m_hbab_afsub, type = 'bars')
+
+pp_check(m_hbab_afsub, type = 'bars_grouped', group = 'Region')
+```
+
+```{r}
+res <- simulateResiduals(
+  fittedModel = m_hbab_afsub,
+  n = 250
+)
+
+plot(res)
+```
+
+
+```{r}
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SJR_lag3 | Region == 'Confluence')
+
+DHARMa::plotResiduals(res, form = ~ log_EXPORTS_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_EXPORTS_lag3 | Region == 'Confluence')
+
+DHARMa::plotResiduals(res, form = ~ log_SAC_lag3 | Region == 'Central')
+
+DHARMa::plotResiduals(res, form = ~ log_SAC_lag3 | Region == 'Confluence')
+```
+
+# Exploratory
+
+```{r}
+with(subset(df_mvi, mvi_class == 'BAB'), table(Season, Region))
+```
+
+```{r}
+df_mvi %>%
+  mutate(Month = lubridate::month(Date, label = TRUE)) %>%
+  count(Month, mvi_class) %>%
+  group_by(Month) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = Month, y = prop, fill = mvi_class)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal()
+```
+
+```{r}
+flow_vars <- c(
+  'log_SAC', 'log_SJR', 'log_EXPORTS',
+  'log_SAC_lag', 'log_SJR_lag', 'log_EXPORTS_lag',
+  'log_SAC_lag3', 'log_SJR_lag3', 'log_EXPORTS_lag3'
+)
+
+df_flow_plot <- df_mvi %>%
+  group_by(Date, Region) %>%
+  summarise(
+    n = n(),
+    n_HAB = sum(mvi_class == 'No bloom'),
+    across(all_of(flow_vars), first),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(
+    cols = all_of(flow_vars),
+    names_to = 'Variable',
+    values_to = 'log_flow'
+  ) %>%
+  mutate(
+    Lag = case_when(
+      grepl('_lag3$', Variable) ~ '3 months',
+      grepl('_lag$', Variable) ~ '1 month',
+      TRUE ~ 'Current'
+    ),
+    Flow = gsub('_lag3$|_lag$', '', gsub('^log_', '', Variable)),
+    Lag = factor(Lag, levels = c('Current', '1 month', '3 months'))
+  ) %>%
+  filter(!is.na(log_flow)) %>%
+  group_by(Region, Flow, Lag) %>%
+  mutate(Flow_quartile = ntile(log_flow, 4)) %>%
+  group_by(Region, Flow, Lag, Flow_quartile) %>%
+  summarise(
+    n = sum(n),
+    n_HAB = sum(n_HAB),
+    n_dates = n_distinct(Date),
+    HAB_prop = n_HAB / n,
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Lower = qbeta(0.025, n_HAB + 0.5, n - n_HAB + 0.5),
+    Upper = qbeta(0.975, n_HAB + 0.5, n - n_HAB + 0.5)
+  )
+
+ggplot(
+  df_flow_plot,
+  aes(x = Flow_quartile, y = HAB_prop, color = Lag, group = Lag)
+) +
+  geom_line(
+    linewidth = 0.7,
+    position = position_dodge(width = 0.25)
+  ) +
+  geom_errorbar(
+    aes(ymin = Lower, ymax = Upper),
+    width = 0.12,
+    alpha = 0.5,
+    position = position_dodge(width = 0.25)
+  ) +
+  geom_point(
+    size = 2,
+    position = position_dodge(width = 0.25)
+  ) +
+  facet_grid(Region ~ Flow) +
+  scale_x_continuous(
+    breaks = 1:4,
+    labels = c('Low', 'Q2', 'Q3', 'High')
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal()
+```

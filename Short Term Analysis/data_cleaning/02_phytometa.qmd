@@ -259,37 +259,37 @@ df_phyto_meta %>%
 # Modeled
 
 ```{r}
-df_phyto_meta %>%
-  count(modeled, Group) %>%
-  pivot_wider(
-    names_from = Group,
-    values_from = n,
-    values_fill = 0
-  )
+# df_phyto_meta %>%
+#   count(modeled, Group) %>%
+#   pivot_wider(
+#     names_from = Group,
+#     values_from = n,
+#     values_fill = 0
+#   )
 ```
 
 ## % Modeled (All)
 
 ```{r}
-df_phyto_meta %>%
-  group_by(YearGroup) %>%
-  summarise(
-    n_total = n(),
-    n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
-    pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
-    .groups = 'drop'
-  )
+# df_phyto_meta %>%
+#   group_by(YearGroup) %>%
+#   summarise(
+#     n_total = n(),
+#     n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
+#     pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
+#     .groups = 'drop'
+#   )
 ```
 
 ## % Modeled (by Season)
 
 ```{r}
-df_phyto_meta %>%
-  group_by(Group) %>%
-  summarise(
-    n_total = n(),
-    n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
-    pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
-    .groups = 'drop'
-  )
+# df_phyto_meta %>%
+#   group_by(Group) %>%
+#   summarise(
+#     n_total = n(),
+#     n_modeled = sum(modeled == 'Yes', na.rm = TRUE),
+#     pct_modeled = round(100 * mean(modeled == 'Yes', na.rm = TRUE),2),
+#     .groups = 'drop'
+#   )
 ```
