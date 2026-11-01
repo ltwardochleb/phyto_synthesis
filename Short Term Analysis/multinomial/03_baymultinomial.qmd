@@ -301,7 +301,9 @@ m_hab_af <- brm(
       log_SAC + log_SJR + log_EXPORTS +
       log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
     ) +
+    log_DIN_lag_over_rt +
     log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
     log_DissOrthophos_lag3_within_rt +
     (1 | Date),
   
@@ -367,7 +369,9 @@ m_hab_afsub <- brm(
       log_SAC + log_SJR + log_EXPORTS +
       log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
     ) +
+    log_DIN_lag_over_rt +
     log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
     log_DissOrthophos_lag3_within_rt +
     (1 | Date),
   
@@ -467,8 +471,12 @@ m_hbab_af <- brm(
       log_SAC + log_SJR + log_EXPORTS +
       log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
     ) +
+    log_DIN_lag_over_rt +
     log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
     log_DissOrthophos_lag3_within_rt +
+    log_DissSilica_lag_over_rt +
+    log_DissSilica_lag3_over_rt +
     (1 | Date),
   
   data = df_subset_hbab,
@@ -531,8 +539,12 @@ m_hbab_afsub <- brm(
       log_SAC + log_SJR + log_EXPORTS +
       log_SAC_lag3 + log_SJR_lag3 + log_EXPORTS_lag3
     ) +
+    log_DIN_lag_over_rt +
     log_DIN_lag3_over_rt +
+    log_DissOrthophos_lag_within_rt +
     log_DissOrthophos_lag3_within_rt +
+    log_DissSilica_lag_over_rt +
+    log_DissSilica_lag3_over_rt +
     (1 | Date),
   
   data = df_subset_hbabtime,
@@ -588,7 +600,6 @@ DHARMa::plotResiduals(res, form = ~ log_SAC_lag3 | Region == 'Central')
 
 DHARMa::plotResiduals(res, form = ~ log_SAC_lag3 | Region == 'Confluence')
 ```
-
 # Exploratory
 
 ```{r}
