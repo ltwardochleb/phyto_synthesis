@@ -7,6 +7,7 @@ library(slider)
 library(cimir)
 library(purrr)
 library(zoo)
+library(imputeTS)
 
 #### Load data ####
 # variables to include in the analysis:
@@ -59,32 +60,133 @@ Sites_date <- Sites_date %>%
          Regions=Site_list)
 # left_join with discrete sample
 df<- left_join(Sites_date,df) # 1980 January Central missing, added in as NA's
-
-colnames(df)
-df_Si_lag<- df  %>%
-  group_by(season, Regions) %>%
-  mutate(DissSilica_av = mean(DissSilica, na.rm= TRUE),
-         Chlorophyll_av= mean(Chlorophyll, na.rm= TRUE)) %>%
-  subset(select = c(Date,Year, season, Regions, DissSilica_av,Chlorophyll_av)) %>%
-  unique()%>%
-  arrange(Date)%>%
-  group_by( Regions)%>%
-  mutate(lagDissSilica = lag(DissSilica_av),
-         lagChlorophyll = lag(Chlorophyll_av)) %>%
-  subset(select = c(Year, season, Regions, lagDissSilica,lagChlorophyll)) %>%
-  unique()
+# Make DIN variable and fill in missing flow values for 1980 January
+df<-df%>%
+  mutate(DIN=ifelse(!is.na(DissNitrateNitrite) & !is.na(DissAmmonia), DissNitrateNitrite+DissAmmonia, NA))  %>%
+  group_by(Date) %>%
+  fill(OUT, .direction = "up")%>%
+  fill(SAC, .direction = "up")%>%
+  fill(SJR, .direction = "up")
   
-df<- left_join( df, df_Si_lag)
+# Get % missing data
+df_NA <- df %>%
+  group_by(Regions) %>%
+  mutate(NA_chl =100*sum(is.na(Chlorophyll))/n() ) %>%
+  mutate(NA_turb =100*sum(is.na(TurbidityNTU))/n() ) %>%
+  mutate(NA_NH4 =100*sum(is.na(DissAmmonia))/n() ) %>%
+  mutate(NA_NO23 =100*sum(is.na(DissNitrateNitrite))/n() )%>%
+  mutate(NA_DIN =100*sum(is.na(DIN))/n() ) %>%
+  mutate(NA_PO4 =100*sum(is.na(DissOrthophos))/n() )%>%
+  mutate(NA_Si =100*sum(is.na(DissSilica))/n() )%>%
+  subset(select = c(Regions, NA_chl, NA_turb,NA_NH4,  NA_NO23, NA_PO4,NA_Si,NA_DIN)) %>%
+  unique()
+
+ggplot(df, aes(x = Date, y = Regions,color = !is.na(TurbidityNTU), fill = !is.na(TurbidityNTU))) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_viridis_c( option = "magma",  direction = 1,  name = "Completeness (%)") +
+  scale_x_date(date_breaks = "2 years", date_labels = "%b %Y") +
+  labs(  title = "Turbidity",  x = "Date",  y = "Region" ) +
+  theme_classic(base_size = 24) +
+  theme( axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank() )
+
+ggplot(df, aes(x = Date, y = Regions,color = !is.na(DissOrthophos), fill = !is.na(DissOrthophos))) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_viridis_c( option = "magma",  direction = 1,  name = "Completeness (%)") +
+  scale_x_date(date_breaks = "2 years", date_labels = "%b %Y") +
+  labs(  title = "Phosphate",  x = "Date",  y = "Region" ) +
+  theme_classic(base_size = 24) +
+  theme( axis.text.x = element_text(angle = 45, hjust = 1),
+         panel.grid = element_blank() )
+
+ggplot(df, aes(x = Date, y = TurbidityNTU,color = Regions)) +
+  geom_line()+
+  theme_classic(base_size = 24)
+  
+### Interpolate data
+df <- df%>%
+  arrange(Regions, Date) %>%
+  group_by(Regions) %>%
+  mutate(
+    ts_val = ts(DissOrthophos, frequency = 12),
+    DissOrthophos = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(DissAmmonia, frequency = 12),
+    DissAmmonia = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(DissNitrateNitrite, frequency = 12),
+    DissNitrateNitrite = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(DIN, frequency = 12),
+    DIN = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(Conductivity, frequency = 12),
+    Conductivity = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(DissSilica, frequency = 12),
+    DissSilica = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(Chlorophyll, frequency = 12),
+    Chlorophyll = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(Temperature, frequency = 12),
+    Temperature = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE))
+  ) %>%
+  ungroup() %>%
+  select(-ts_val)
+  
+# set negative interpolated values to minimum positive value 
+df<- df %>%
+  mutate(DissAmmonia = if_else(DissAmmonia < 0, 0.00006256305, DissAmmonia) )%>%
+  mutate(Chlorophyll = if_else(Chlorophyll < 0, 0.03827769, Chlorophyll) )
+
+
+ggplot(df, aes(x = Date, y = DissOrthophos,color = Regions)) +
+  geom_line()+
+  theme_classic(base_size = 24)
+
+ggplot(df, aes(x = Date, y = Chlorophyll,color = Regions)) +
+  geom_line()+
+  theme_classic(base_size = 24)
+
+### Get discharge value
+unique(df$Regions)
+df<- df %>%
+  mutate(Discharge = ifelse(Regions=="North Delta", SAC, OUT))
+
+### Get 3 month lags of data
+
+
 
 df<- df %>%
-  mutate(log_chl_plus1 = log(Chlorophyll+1))%>%
-  mutate(lagDIN=ifelse(!is.na(lagDissNitrateNitrite) & !is.na(lagDissAmmonia), lagDissNitrateNitrite+lagDissAmmonia, NA)) %>%
   group_by(Regions) %>%
   arrange(Date) %>%
-  mutate(DissSilica_lag_1mo = lag(DissSilica),
-         DissSilica_lag_5mo = lag(DissSilica, n = 5), # This might be the way to go
-         DissSilica_lag_3mo_av = slide_index_mean(DissSilica, i = Date, before = ~ .x %m-% months(3), after = days(-1), complete = FALSE, na_rm = TRUE)) %>%
-  mutate(year_month = as.yearmon(Date))
+  mutate(lag3_DissSilica = lag(DissSilica, n =3),
+         lag3_Chlorophyll = lag(Chlorophyll, n =3),
+         lag3_Temperature = lag(Temperature, n =3),
+         lag3_DIN = lag(DIN, n =3),
+         lag3_Conductivity = lag(Conductivity, n =3),
+         lag3_DissAmmonia = lag(DissAmmonia, n =3),
+         lag3_DissNitrateNitrite = lag(DissNitrateNitrite, n =3),
+         lag3_DissOrthophos = lag(DissOrthophos, n =3),
+         lag3_OUT = lag(OUT, n =3),
+         lag3_Discharge = lag(Discharge, n =3),
+         lag3_TurbidityNTU = lag(TurbidityNTU, n =3)
+  ) %>%
+  mutate(year_month = as.yearmon(Date)) %>%
+   mutate(log_chl_plus1 = log(Chlorophyll+1))  %>%
+  ungroup() %>%
+  group_by(Date)%>%
+  fill(clam_step, .direction = "up") %>%
+  fill(season, .direction = "up")%>%
+  fill(Month, .direction = "up")#%>%
+  # mutate(lagDIN=ifelse(!is.na(lagDissNitrateNitrite) & !is.na(lagDissAmmonia), lagDissNitrateNitrite+lagDissAmmonia, NA)) %>%
+  # group_by(Regions) %>%
+  # arrange(Date) %>%
+  # mutate(DissSilica_lag_1mo = lag(DissSilica),
+  #        DissSilica_lag_5mo = lag(DissSilica, n = 5), # This might be the way to go
+  #        DissSilica_lag_3mo_av = slide_index_mean(DissSilica, i = Date, before = ~ .x %m-% months(3), after = days(-1), complete = FALSE, na_rm = TRUE)) %>%
+  # mutate(year_month = as.yearmon(Date))
   
   
 ### Download precipitation data
@@ -96,12 +198,12 @@ station_metadata <- cimis_station()
 
 # 2. Extract and format the active periods 
 station_active_ranges <- station_metadata %>%
-  select(StationId, Name, County, Status, ConnectDate, DisconnectDate) %>%
+  select(StationNbr, Name, County, IsActive, ConnectDate, DisconnectDate) %>%
   mutate(
-    ConnectDate = as.Date(ConnectDate),
+    ConnectDate = as.Date(ConnectDate, format ="%m/%d/%Y"),
     # If it's active, it's still running "Today" rather than the placeholder 2100 date
-    EndDate = if_else(Status == "Active", Sys.Date(), as.Date(DisconnectDate))
-  )
+    EndDate = if_else(IsActive == "True", Sys.Date(), as.Date(DisconnectDate, format ="%m/%d/%Y"))
+  ) %>% unique()
 
 # 3. View the date ranges
 delta_stations <- c(47) 
@@ -114,7 +216,7 @@ data_items <- c(
 
 # 4. Generate annual date windows (CIMIS limits queries to 1-year max)
 # Note: Data begins mid-1982, but loop runs through requested period safely
-years <- 1985:2022
+years <- 1985:2022 #1985
 date_ranges <- data.frame(
   start = paste0(years, "-01-01"),
   end = paste0(years, "-12-31"),
@@ -131,7 +233,7 @@ delta_data_list <- purrr::map2(date_ranges$start, date_ranges$end, function(s_da
     message(paste("Downloading:", s_date, "to", e_date))
     
     # Query API via cimir
-    df <- cimis_data(
+    df <- cimir::cimis_data(
       targets = delta_stations, 
       start.date = s_date, 
       end.date = e_date, 
@@ -144,6 +246,9 @@ delta_data_list <- purrr::map2(date_ranges$start, date_ranges$end, function(s_da
     return(NULL)
   })
 })
+
+
+
 
 # 6. Bind into one clean data frame
 final_delta_data <- bind_rows(delta_data_list)
@@ -166,7 +271,7 @@ final_delta_data <-left_join(date_sequence, final_delta_data)
 final_delta_data <-final_delta_data%>%
   ungroup() %>%
   arrange(year_month) %>%
-  mutate(precip_month_lag_1mo = lag(precip_month_sum)) 
+  mutate(lag3_precip_month = lag(precip_month_sum, n =3)) 
   
 
 
@@ -188,7 +293,7 @@ ggplot(df,aes(x =TurbidityFNU, y = TurbidityNTU, color = Regions ))+
   theme_classic(base_size = 24)
 
 # looks pretty close to normal, large sample size helps
-ggplot(df, aes(x = log_chl_plu1)) +
+ggplot(df, aes(x = log_chl_plus1)) +
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   facet_wrap(~ Regions) +
   labs(
@@ -263,13 +368,15 @@ boxplot(df$logDissNitrateNitrite)
 # 
 
 
-df_subset <- df  %>%
+df_subset <- df  %>% mutate(clam_step= ifelse(clam_step=="pre clam", 0, 1)) %>%
   subset(select = c("Date", "season", "Month", "Regions","Chlorophyll", "log_chl_plus1", "Temperature",
-                    "OUT","lagDIN", "lagDissNitrateNitrite", "lagDissAmmonia", 
-                    "Conductivity",  "TurbidityNTU", "lagDissSilica", "lagChlorophyll", "lagOUT", "precip_month_lag_1mo",
-                    "lagDissOrthophos"))
+                    "OUT", "Discharge","lag3_DIN", "lag3_DissNitrateNitrite", "lag3_DissAmmonia", 
+                    "Conductivity",  "TurbidityNTU", "lag3_DissSilica", "lag3_Chlorophyll", "lag3_OUT", #"precip_month_lag_1mo",
+                    "lag3_DissOrthophos", "DissOrthophos", "DIN", "lag3_Discharge", "DissNitrateNitrite", "DissAmmonia", "clam_step", "lag3_precip_month", "precip_month_sum"))
 
-df_subset_test <- df_subset %>% na.omit() #2098 rows remain
+colSums(is.na(df_subset))
+
+df_subset_no_na <- df_subset %>% subset(select = -c(lag3_precip_month, precip_month_sum, TurbidityNTU)) %>% na.omit() #2098 rows remain
 
 ### run pSEM ####
 
@@ -281,15 +388,14 @@ Region ="North Delta"
 Region = "Central"
 
 phytoplankton_psem <- psem(
-  lme(OUT ~ precip_month_lag_1mo+lagOUT, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
-  lme(Temperature ~ OUT+precip_month_lag_1mo+lagOUT, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
-  lme(TurbidityNTU ~ OUT+precip_month_lag_1mo+lagOUT, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
-  lme(Conductivity ~ OUT+precip_month_lag_1mo+lagOUT, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
-  lme(lagDIN ~ lagOUT+precip_month_lag_1mo, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
-  lme(lagDissSilica ~ lagOUT+precip_month_lag_1mo, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)),
-  lme(lagDissOrthophos ~ lagOUT+precip_month_lag_1mo, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
+  lme(lag3_DIN ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region)) ,
   
-  lme(log_chl_plus1 ~ OUT+lagOUT+Temperature+lagDIN+ TurbidityNTU+ Conductivity+lagDissSilica+precip_month_lag_1mo+lagDissOrthophos,
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos,
       random = ~ 1 | Month, na.action = na.omit,  data = df_subset %>% filter(Regions==Region) )
   
 )
@@ -312,3 +418,106 @@ DF_phytoplankton_psem <- DF_phytoplankton_psem %>%
   mutate(std_error_std_estimate = (Std_Estimate/Estimate)*Std_Error) %>%
   mutate(lower_ci_95 = Std_Estimate - 1.96*std_error_std_estimate)%>%
   mutate(upper_ci_95 = Std_Estimate + 1.96*std_error_std_estimate)
+
+
+
+## test model with no region
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DIN ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step,
+      random = ~ 1 | Month, na.action = na.omit,  data = df_subset  )
+  
+)
+
+summary(phytoplankton_psem)
+
+### Test models with NH4 and NO23 separate
+
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DissNitrateNitrite ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ),
+  lme(lag3_DissAmmonia ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DissNitrateNitrite+lag3_DissAmmonia+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step,
+      random = ~ 1 | Month, na.action = na.omit,  data = df_subset  )
+  
+)
+
+summary(phytoplankton_psem)
+
+## test model with precipitation
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DIN ~ lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge+lag3_precip_month, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+lag3_precip_month,
+      random = ~ 1 | Month, na.action = na.omit,  data = df_subset  )
+)
+
+
+summary(phytoplankton_psem)
+
+## test model with no region and current DIN + PO4
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DIN ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Month, na.action = na.omit,  data = df_subset ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+DissOrthophos+DIN,
+      random = ~ 1 | Month, na.action = na.omit,  data = df_subset  )
+  
+)
+
+summary(phytoplankton_psem)
+
+### Try model with autocorrelation
+
+df_subset_no_na <- df_subset_no_na %>%
+  mutate(
+    Regions = as.factor(Regions),
+    # Extract month as an unordered factor (1 to 12)
+    Month = factor(format(Date, "%m"))
+  )%>%
+  arrange(Regions, Date) %>%
+  group_by(Regions) %>%
+  mutate(time_index = row_number()) %>%
+  ungroup()
+
+
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(lag3_DIN ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(DissOrthophos ~ lag3_Discharge+Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(DIN ~ lag3_Discharge+Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+DissOrthophos+DIN,
+      random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na  )
+  
+)
+
+summary(phytoplankton_psem)
+
+
+
+
