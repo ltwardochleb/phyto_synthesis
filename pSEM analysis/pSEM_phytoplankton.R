@@ -102,8 +102,58 @@ ggplot(df, aes(x = Date, y = Regions,color = !is.na(DissOrthophos), fill = !is.n
 ggplot(df, aes(x = Date, y = TurbidityNTU,color = Regions)) +
   geom_line()+
   theme_classic(base_size = 24)
-  
-### Interpolate data
+### Interpolate data compare to old method ####
+### Ryan's GAM code method
+
+
+### Kyle's method
+
+# log transforming some variables to better visualize
+
+df_kyle <- df%>%
+  mutate(logConductivity = log(Conductivity),
+         logDissOrthophos_plus1= log(DissOrthophos+1),
+         logDissAmmonia_plus1 = log(DissAmmonia+1),
+         logDissNitrateNitrite_plus1 = log(DissNitrateNitrite+1),
+         logChlorophyll_plus1 = log(Chlorophyll+1))
+  arrange(Regions, Date) %>%
+  group_by(Regions) %>%
+  mutate(
+    ts_val = ts(logDissOrthophos_plus1, frequency = 12),
+    logDissOrthophos_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(logDissAmmonia_plus1, frequency = 12),
+    logDissAmmonia_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    
+    ts_val = ts(logDissNitrateNitrite_plus1, frequency = 12),
+    logDissNitrateNitrite_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+
+    ts_val = ts(logConductivity, frequency = 12),
+    logConductivity = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+
+    ts_val = ts(logChlorophyll_plus1, frequency = 12),
+    logChlorophyll_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+ ) %>%
+  ungroup() %>%
+  select(-ts_val)
+
+# set negative interpolated values to minimum positive value 
+  df_kyle<- df_kyle %>%
+  mutate(DissAmmonia = if_else(DissAmmonia < 0, 0.00006256305, DissAmmonia) )%>%
+  mutate(Chlorophyll = if_else(Chlorophyll < 0, 0.03827769, Chlorophyll) )
+
+
+ggplot(df, aes(x = Date, y = DissOrthophos,color = Regions)) +
+  geom_line()+
+  theme_classic(base_size = 24)
+
+
+
+### Interpolate data real version ####
+
+
+
+#Kalman filter - Kyle's approach
 df <- df%>%
   arrange(Regions, Date) %>%
   group_by(Regions) %>%
@@ -519,5 +569,22 @@ phytoplankton_psem <- psem(
 summary(phytoplankton_psem)
 
 
+# Test NH4 + NO23
+phytoplankton_psem <- psem(
+  lme(Discharge ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(Temperature ~ Discharge+lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(Conductivity ~ Discharge+lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(lag3_DIN ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  lme(lag3_DissSilica ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(lag3_DissOrthophos ~ lag3_Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(DissOrthophos ~ lag3_Discharge+Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ),
+  lme(DIN ~ lag3_Discharge+Discharge, random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na ) ,
+  
+  lme(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DissAmmonia+lag3_DissNitrateNitrite+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+DissOrthophos+DissAmmonia+DissNitrateNitrite,
+      random = ~ 1 | Regions/ Month,   correlation = corAR1(form = ~ time_index | Regions),  data = df_subset_no_na  )
+  
+)
+
+summary(phytoplankton_psem)
 
 
