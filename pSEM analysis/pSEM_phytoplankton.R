@@ -103,51 +103,207 @@ ggplot(df, aes(x = Date, y = TurbidityNTU,color = Regions)) +
   geom_line()+
   theme_classic(base_size = 24)
 ### Interpolate data compare to old method ####
-### Ryan's GAM code method
+##### Ryan's GAM code method####
+
+c = c("Chlorophyll","logchla", "Regions", "Date","Year", "Month",  "season","SAC",
+      "EXPORT","logEXPORT","OUT", "DissAmmonia",
+      "TotPhos","DissNitrateNitrite", 
+      "Temperature","lagTemperature","Secchi", 
+      "Conductivity","season_num", "DissOrthophos",  "clam_step","logDissNitrateNitrite","logDissAmmonia","logDissOrthophos","logConductivity","logSAC","logOUT")
+
+df_ryan_gam <- df%>%
+  mutate(logConductivity = log(Conductivity),
+         logDissOrthophos= log(DissOrthophos),
+         logDissAmmonia = log(DissAmmonia),
+         logDissNitrateNitrite = log(DissNitrateNitrite),
+         logchla = log(Chlorophyll),
+         logOUT = log(OUT),
+         logEXPORT = log(EXPORT),
+         logSAC = log(SAC)) 
+
+df_ryan_gam <- subset(df_ryan_gam, select = c)
 
 
-### Kyle's method
+clean_df_z <- df_ryan_gam 
+#clean_df_z$logDissAmmoniaTest[abs(scale(clean_df_z$logDissAmmoniaTest)) > 3.29] <- NA
+
+clean_df_z$logDissAmmonia[abs(scale(clean_df_z$logDissAmmonia)) > 3.29] <- NA
+
+clean_df_z$logDissNitrateNitrite[abs(scale(clean_df_z$logDissNitrateNitrite)) > 3.29] <- NA
+
+clean_df_z$logDissOrthophos[abs(scale(clean_df_z$logDissOrthophos)) > 3.29] <- NA
+
+outliers_z <- anti_join(df_ryan_gam, clean_df_z)
+
+df_ryan_gam <- clean_df_z
+
+print(paste("rows changed:",nrow(outliers_z)))
+
+df_flow <- df_ryan_gam[,c("Date","Regions","SAC", "OUT",  "EXPORT", "logEXPORT","logOUT","logSAC")]
+
+df_no_flow <- df_ryan_gam[,!(names(df_ryan_gam) %in% c("SAC", "logSAC", "OUT", "logOUT", "EXPORT", "logEXPORT"))]
+
+r <- unique(df_no_flow$Regions)
+region_list <- list()
+for (region in r){
+  df_regional <- df_no_flow %>% filter(Regions == region)
+  region <- gsub(" ","",region)
+  region_list[[region]] <- df_regional
+}
+
+
+regional_imp <- list()
+for (region_name in as.character(names(region_list))){
+  current_df <- region_list[[region_name]]
+  predictors <- quickpred(current_df)
+  imp <- mice(current_df,seed = 123, print=F, predictorMatrix = predictors)
+  new_name <- paste0(region_name, "_imp")
+  regional_imp[[new_name]]<- imp
+}
+
+regional_imp_dfs <- list()
+action_seq <- as.list(seq(1,5))
+for (region_imp in as.character(names(regional_imp))){
+  current_imp <- regional_imp[[region_imp]]
+  for (i in action_seq){
+    df_new <- complete(current_imp,action = i, include=FALSE)
+    df_new <- left_join( df_new,df_flow, by=c("Date","Regions"))
+    new_name <- paste0(region_imp, "_df", i)
+    regional_imp_dfs[[new_name]]<- df_new}}
+
+df_list_lag <- lapply(regional_imp_dfs, function(y){
+  
+  lagged_df <- y %>%
+    # Group by region so completion happens independently per region
+    group_by(Regions) %>%
+    
+    # Sort chronologically within each group
+    arrange(Regions, Date) %>%
+    
+    # Make sure all dates are present for lag variables later on.
+    complete(Date = seq(min(Date), max(Date), by = "1 month")) %>%
+    
+    # Lag all numeric columns by 3 rows
+    mutate(across(where(is.numeric), ~ lag(.x, n = 3), .names = "lag3_{col}")) %>%
+    
+    ungroup()
+})
+
+df1 <- distinct(rbind(df_list_lag$Central_imp_df1, df_list_lag$Confluence_imp_df1,
+                      df_list_lag$NorthDelta_imp_df1, df_list_lag$South_imp_df1,df_list_lag$SuisunBay_imp_df1)) #%>%
+
+### df2
+df2 <- distinct(rbind(df_list_lag$Central_imp_df2, df_list_lag$Confluence_imp_df2,
+                      df_list_lag$NorthDelta_imp_df2, df_list_lag$South_imp_df2,df_list_lag$SuisunBay_imp_df2))#%>%
+
+### df3
+
+df3 <- distinct(rbind(df_list_lag$Central_imp_df3, df_list_lag$Confluence_imp_df3,
+                      df_list_lag$NorthDelta_imp_df3, df_list_lag$South_imp_df3,df_list_lag$SuisunBay_imp_df3))#%>%
+
+### df4
+df4 <- distinct(rbind(df_list_lag$Central_imp_df4, df_list_lag$Confluence_imp_df4,
+                      df_list_lag$NorthDelta_imp_df4, df_list_lag$South_imp_df4,df_list_lag$SuisunBay_imp_df4))#%>%
+
+
+### df5
+
+df5 <- distinct(rbind(df_list_lag$Central_imp_df5, df_list_lag$Confluence_imp_df5,
+                      df_list_lag$NorthDelta_imp_df5, df_list_lag$South_imp_df5,df_list_lag$SuisunBay_imp_df5))#%>%
+
+
+
+##### Kyle's method #####
 
 # log transforming some variables to better visualize
 
 df_kyle <- df%>%
   mutate(logConductivity = log(Conductivity),
-         logDissOrthophos_plus1= log(DissOrthophos+1),
-         logDissAmmonia_plus1 = log(DissAmmonia+1),
-         logDissNitrateNitrite_plus1 = log(DissNitrateNitrite+1),
-         logChlorophyll_plus1 = log(Chlorophyll+1))
+         logDissOrthophos= log(DissOrthophos),
+         logDissAmmonia = log(DissAmmonia),
+         logDissNitrateNitrite = log(DissNitrateNitrite),
+         logChlorophyll = log(Chlorophyll)) %>%
   arrange(Regions, Date) %>%
   group_by(Regions) %>%
   mutate(
-    ts_val = ts(logDissOrthophos_plus1, frequency = 12),
-    logDissOrthophos_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    ts_val = ts(logDissOrthophos, frequency = 12),
+    logDissOrthophos = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
     
-    ts_val = ts(logDissAmmonia_plus1, frequency = 12),
-    logDissAmmonia_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    ts_val = ts(logDissAmmonia, frequency = 12),
+    logDissAmmonia = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
     
-    ts_val = ts(logDissNitrateNitrite_plus1, frequency = 12),
-    logDissNitrateNitrite_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    ts_val = ts(logDissNitrateNitrite, frequency = 12),
+    logDissNitrateNitrite = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
 
     ts_val = ts(logConductivity, frequency = 12),
     logConductivity = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
 
-    ts_val = ts(logChlorophyll_plus1, frequency = 12),
-    logChlorophyll_plus1 = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
+    ts_val = ts(logChlorophyll, frequency = 12),
+    logChlorophyll = as.numeric(na_kalman(ts_val, model = "StructTS", smooth = TRUE)),
  ) %>%
   ungroup() %>%
   select(-ts_val)
 
-# set negative interpolated values to minimum positive value 
-  df_kyle<- df_kyle %>%
-  mutate(DissAmmonia = if_else(DissAmmonia < 0, 0.00006256305, DissAmmonia) )%>%
-  mutate(Chlorophyll = if_else(Chlorophyll < 0, 0.03827769, Chlorophyll) )
 
+#### Compare methods
+df1<- as.data.frame(df1)
 
-ggplot(df, aes(x = Date, y = DissOrthophos,color = Regions)) +
-  geom_line()+
+chl_comp_plot_North<- ggplot() +
+  geom_line(data=df1 %>%filter(Regions=="North Delta"), aes(x = Date, y = logchla),color = "blue")+
+  geom_line(data=df2 %>%filter(Regions=="North Delta"), aes(x = Date, y = logchla),color = "green")+
+  geom_line(data=df3 %>%filter(Regions=="North Delta"), aes(x = Date, y = logchla),color = "black")+
+  geom_line(data=df4 %>%filter(Regions=="North Delta"), aes(x = Date, y = logchla),color = "gray")+
+  geom_line(data=df5 %>%filter(Regions=="North Delta"), aes(x = Date, y = logchla),color = "purple")+
+  geom_line(data=df_kyle %>%filter(Regions=="North Delta"), aes(x = Date, y = logChlorophyll),color = "red")+
   theme_classic(base_size = 24)
+chl_comp_plot_North
+ggsave("pSEM analysis/chl_comp_plot_North.jpg",chl_comp_plot_North, width = 15, height = 8)
 
 
+chl_comp_plot_south<- ggplot() +
+  geom_line(data=df1 %>%filter(Regions=="South"), aes(x = Date, y = logchla),color = "blue")+
+  geom_line(data=df2 %>%filter(Regions=="South"), aes(x = Date, y = logchla),color = "green")+
+  geom_line(data=df3 %>%filter(Regions=="South"), aes(x = Date, y = logchla),color = "black")+
+  geom_line(data=df4 %>%filter(Regions=="South"), aes(x = Date, y = logchla),color = "gray")+
+  geom_line(data=df5 %>%filter(Regions=="South"), aes(x = Date, y = logchla),color = "purple")+
+  geom_line(data=df_kyle %>%filter(Regions=="South"), aes(x = Date, y = logChlorophyll),color = "red")+
+  theme_classic(base_size = 24)
+chl_comp_plot_south
+ggsave("pSEM analysis/chl_comp_plot_south.jpg",chl_comp_plot_south, width = 15, height = 8)
+
+PO4_comp_plot_south<- ggplot() +
+  geom_line(data=df1 %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "blue")+
+  geom_line(data=df2 %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "green")+
+  geom_line(data=df3 %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "black")+
+  geom_line(data=df4 %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "gray")+
+  geom_line(data=df5 %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "purple")+
+  geom_line(data=df_kyle %>%filter(Regions=="South"), aes(x = Date, y = logDissOrthophos),color = "red")+
+  theme_classic(base_size = 24)
+PO4_comp_plot_south
+ggsave("pSEM analysis/PO4_comp_plot_south.jpg",PO4_comp_plot_south, width = 15, height = 8)
+
+PO4_comp_plot_North<- ggplot() +
+  geom_line(data=df1 %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "blue")+
+  geom_line(data=df2 %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "green")+
+  geom_line(data=df3 %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "black")+
+  geom_line(data=df4 %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "gray")+
+  geom_line(data=df5 %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "purple")+
+  geom_line(data=df_kyle %>%filter(Regions=="North Delta"), aes(x = Date, y = logDissOrthophos),color = "red")+
+  theme_classic(base_size = 24)
+PO4_comp_plot_North
+ggsave("pSEM analysis/PO4_comp_plot_North.jpg",PO4_comp_plot_North, width = 15, height = 8)
+
+PO4_comp_plot_Central<- ggplot() +
+  geom_line(data=df1 %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "blue")+
+  geom_line(data=df2 %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "green")+
+  geom_line(data=df3 %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "black")+
+  geom_line(data=df4 %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "gray")+
+  geom_line(data=df5 %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "purple")+
+  geom_line(data=df_kyle %>%filter(Regions=="Central"), aes(x = Date, y = logDissOrthophos),color = "red")+
+  theme_classic(base_size = 24)
+PO4_comp_plot_Central
+ggsave("pSEM analysis/PO4_comp_plot_Central.jpg",PO4_comp_plot_Central, width = 15, height = 8)
+psem
 
 ### Interpolate data real version ####
 
@@ -587,4 +743,22 @@ phytoplankton_psem <- psem(
 
 summary(phytoplankton_psem)
 
+# Model with no random effects
+phytoplankton_psem <- psem(
+  lm(Discharge ~ lag3_Discharge,  data = df_subset_no_na ) ,
+  lm(Temperature ~ Discharge+lag3_Discharge,  data = df_subset_no_na ) ,
+  lm(Conductivity ~ Discharge+lag3_Discharge,  data = df_subset_no_na ) ,
+  lm(lag3_DIN ~ lag3_Discharge,  data = df_subset_no_na ) ,
+  lm(lag3_DissSilica ~ lag3_Discharge,  data = df_subset_no_na ),
+  lm(lag3_DissOrthophos ~ lag3_Discharge,  data = df_subset_no_na ),
+  lm(DissOrthophos ~ lag3_Discharge+Discharge,  data = df_subset_no_na ),
+  lm(DIN ~ lag3_Discharge+Discharge,  data = df_subset_no_na ) ,
+  
+  lm(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+DissOrthophos+DIN,
+          data = df_subset_no_na  )
+  
+)
 
+summary(phytoplankton_psem)
+psem(lm(log_chl_plus1 ~ Discharge+lag3_Discharge+Temperature+lag3_DIN+ Conductivity+lag3_DissSilica+lag3_DissOrthophos+lag3_Chlorophyll+clam_step+DissOrthophos+DIN,
+         data = df_subset_no_na  ))
